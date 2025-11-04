@@ -7,11 +7,11 @@ Created on Tue Mar 12 13:48:32 2024
 wg: comments by Werner
 """
 
-#Main script used for WRF validation. Contains multiple functions that will save pickle files once complete.
+#Main script used for model validation. Contains multiple functions that will save pickle files once complete.
 
-#Output pickle files will have time/space interpolated WRF data at every station in the domain.
-# "case_name_processed_data.pkl" will have time series of WRF and measurements for every single station
-# "case_name_wrfmean_data.pkl" is a single domain averaged time series of WRF data (at stations locations) for each variable
+#Output pickle files will have time/space interpolated model data at every station in the domain.
+# "case_name_processed_data.pkl" will have time series of model and measurements for every single station
+# "case_name_modelmean_data.pkl" is a single domain averaged time series of model data (at stations locations) for each variable
 # "case_name_situmean_data.pkl" is a single domain averaged time series of station data for each variable
 
 
@@ -19,10 +19,10 @@ wg: comments by Werner
 
 # - A JSON with weather data from the Synoptic Weather API (run synreq.py),
 
-# - A csv with weather variable names from Synoptic and how to calculate those in WRF (provided as synoptic_varlist.csv). 
+# - A csv with weather variable names from Synoptic and how to calculate those in model (provided as synoptic_varlist.csv). 
 ## - This determines which variables are validated. Full list of available variables can be found here: https://demos.synopticdata.com/variables/index.html
 
-## - WRF output files, with one frame per output file.
+## - model output files, with one frame per output file.
 
 # The code also includes some plotting at the end, but can be turned on/off with PLOTTING flag set to True or False.
 
@@ -51,6 +51,7 @@ from metpy.units import units
 import pickle
 import json
 import os
+import os.path as osp
 import warnings
 import datetime
 from metpy.calc import wind_components
@@ -63,11 +64,6 @@ from mpl_toolkits.basemap import Basemap
 
 
 
-# Consistent settings (shared by all models) 
-path2obs = 'sensorData/timeseries'   # Synoptic API JSON
-freq     = '6h'                       # frequency of WRF/output files
-cwd      = os.getcwd()
-
 # Pick the model you want to run
 case_name = 'aurora_0.25_pre'  
 """     
@@ -76,256 +72,300 @@ case_name = 'aurora_0.25_pre'
           'fourcastv2netEra5'
           'aurora_0.25_pre'
           'aurora_0.25_fine'
-          'aurora_0.1_fine
+          'aurora_0.1_fine'
 """
-# Switch: per-model file/variable settings
-## PATH NAMES ARE TEMPORARY  UPDATE FOR SPECIFC CASE
-match case_name:
-    case 'fourcastv2net':
-        var_ref_path = 'fourcastnetv2-small/synoptic_varlist_fnetv2_era5.csv'
-        path2wrf     = 'fourcastnetv2-small.grib'
-    case 'fourcastv2netHRES':
-        var_ref_path = 'fourcastnetv2-small/synoptic_varlist_fnetv2_ifs_hres.csv'
-        path2wrf     = 'fourcastnetv2-small_ifs_hres.grib'
-    case 'fourcastv2netEra5':
-        var_ref_path = 'fourcastnetv2-small/synoptic_varlist_fnetv2_era5.csv'
-        path2wrf     = 'fourcastnetv2-small_era5.grib'
-    case 'aurora_0.25_pre':
-        var_ref_path = 'aurora/synoptic_varlist_aurora.csv'
-        path2wrf     = '/shome/u014930890/PGE Projects/aurora_10day/data/aurora-2.5-pretrained_1.grib'
-    case 'aurora_0.25_fine':
-        var_ref_path = 'aurora/synoptic_varlist_aurora.csv'
-        path2wrf     = 'aurora-2.5-fine.grib'
-    case 'aurora_0.1_fine':
-        var_ref_path = 'aurora/synoptic_varlist_aurora.csv'
-        path2wrf     = 'aurora-1.0-fine.grib'
-    case _:
-        raise ValueError(
-            f"Unknown case_name='{case_name}'. "
-            "Valid: fourcastv2net, fourcastv2netHRES, fourcastv2netEra5, aurora_0.25_pre"
-        )
-# Initialize from the selected case 
-var_ref = pd.read_csv(var_ref_path, engine='python')
+path2model = "/shome/u014930890/PGE Projects/aurora_10day/data/aurora-2.5-pretrained_1.grib"
 
-## Consistent settings
-path2obs = 'sensorData/timeseries' #Synoptic API JSON
-freq = '6h' #frequency of wrfoutput files
-
+# Consistent settings
+path2obs = 'sensorData/timeseries'   # Synoptic API JSON
+freq     = '6h'                       # frequency of model/output files
 
 
 PLOTTING=False
 EVALUATE=False
 
+def load_model(case_name, path2model):
+    """
+    Load model data and variable reference configuration.
 
+    Args:
+        case_name (str): model case identifier (e.g., 'aurora_0.25_pre', 'fourcastv2net')
+        path2model (str): path to model GRIB file
 
-#%% DATA ASSIMILATION
-def data_assimilation(path2obs, path2wrf,cwd):
+    Returns:
+        xds (xarray.Dataset): model output with valid_time coordinates
+        var_ref (pandas.DataFrame): variable name to formula mapping from CSV
+    """
 
-    # shared params, Aurora, FCNetv2, ERA5
-    params = ['2t', 'r', '10u', '10v', 'sp', 'z']
+    # pick the correct CSV for formulas
+    ## PATH NAMES ARE TEMPORARY  UPDATE FOR SPECIFC CASE
+    match case_name:
+        case 'fourcastv2net' | 'fourcastv2netEra5':
+            var_ref_path = 'fourcastnetv2-small/synoptic_varlist_fnetv2_era5.csv'
+        case 'fourcastv2netHRES':
+            var_ref_path = 'fourcastnetv2-small/synoptic_varlist_fnetv2_ifs_hres.csv'
+        case 'aurora_0.25_pre' | 'aurora_0.25_fine' | 'aurora_0.1_fine':
+            var_ref_path = 'aurora/synoptic_varlist_aurora.csv'
+        case _:
+            raise ValueError(f"Unknown case_name='{case_name}'.")
+    var_ref = pd.read_csv(var_ref_path, engine='python')
 
     # Only HRES differs in params, uses 'gh' instead of 'z'
     if case_name == 'fourcastv2netHRES':
         params = ['2t', 'r', '10u', '10v', 'sp', 'gh']
+    else:
+        # shared params, Aurora, FCNetv2, ERA5
+        params = ['2t', 'r', '10u', '10v', 'sp', 'z']
 
-    # Read GRIB and select variables
-    ds   = ekd.from_source("file", path2wrf)
-    wrf1 = ds.sel(param=params).to_xarray()
+
+    # open GRIB into xarray and select variables
+    ds  = ekd.from_source("file", path2model)
+    xds = ds.sel(param=params).to_xarray()
 
     # HRES-only: convert geopotential height -> geopotential
     if case_name == 'fourcastv2netHRES':
-        wrf1['z'] = wrf1['gh'] * 9.80665  # g [m/s^2]
+        if 'gh' not in xds:
+            raise KeyError("Missing 'gh' for HRES")
+        xds = xds.assign(z=xds['gh'] * 9.80665)
 
     # Time handling
     if case_name == 'fourcastv2netEra5':
         # ERA5 uses forecast_reference_time → derive step
-        wrf1 = wrf1.assign_coords(valid_time=wrf1.forecast_reference_time)
-        step = [wt-wrf1.valid_time.data[0] for wt in wrf1.valid_time.data]
-        wrf1 = wrf1.rename({'forecast_reference_time': 'step'}).assign_coords(step=step)
+        xds = xds.assign_coords(valid_time=xds.forecast_reference_time)
+        step = [wt-xds.valid_time.data[0] for wt in xds.valid_time.data]
+        xds = xds.rename({'forecast_reference_time': 'step'}).assign_coords(step=step)
     else:
         # Everyone else: reference datetime + step
-        ref_date = pd.to_datetime(str(wrf1.attrs['date']), format='%Y%m%d')
-        ref_time = pd.Timedelta(minutes=int(wrf1.attrs.get('time', 0)))
+        ref_date = pd.to_datetime(str(xds.attrs['date']), format='%Y%m%d')
+        ref_time = pd.Timedelta(minutes=int(xds.attrs.get('time', 0)))
         ref_datetime   = (ref_date + ref_time).to_datetime64()
-        valid_time = ref_datetime + wrf1['step']
-        wrf1 = wrf1.assign_coords(valid_time=valid_time)
+        valid_time = ref_datetime + xds['step']
+        xds = xds.assign_coords(valid_time=valid_time)
 
-    data = {}
+    return xds, var_ref
 
-    #loading in output from synoptic json req.
+
+def to_lon180(lon, right_closed: bool = False):
+    """
+    Convert longitude values to [-180, 180] range.
+
+    Args:
+        lon (array-like): longitude values to convert
+        right_closed (bool): if True, use (-180, 180] range instead of [-180, 180]
+
+    Returns:
+        array-like: longitude values in [-180, 180] or (-180, 180] range
+    """
+    a = np.asarray(lon)
+    # quick return if already in range
+    if np.nanmin(a) >= -180 and np.nanmax(a) <= 180:
+        return lon
+    # Main transformation
+    out = ((a + 180) % 360) - 180
+    if right_closed:  # Edge inclusion handling
+        out = np.where(out == -180, 180.0, out)
+    return out
+
+
+def data_loading(path2obs, case_name, path2model):
+    """
+    Load observation and model data, interpolate model to station locations.
+
+    Args:
+        path2obs (str): path to synoptic observation JSON file
+        case_name (str): model case identifier for output naming
+        path2model (str): path to model GRIB file
+
+    Returns:
+        data (dict): dictionary with keys (station_name, (lon, lat)) containing 'situ' and 'model' dataframes
+    """
+
+    # 1) Loading model data and synoptic data
+    model, var_ref = load_model(case_name, path2model)
+
+    # loading in output from synoptic json req.
     js = json.load(open(path2obs))
-
-    master = {}
-
-    #when i made this code, i was using an output from one of Angel's scripts. this emulates the output and saved me a lot of time in recoding ? what does this do?
+    obs = {}
+    # reformatting synoptic data into pandas dataframes
     for site in js['STATION']:
+        obs[site['STID']] = pd.DataFrame.from_dict(site['OBSERVATIONS'])
+        obs[site['STID']] = obs[site['STID']].set_index(pd.to_datetime(obs[site['STID']]['date_time']))
+        obs[site['STID']].attrs = {k: site[k] for k in set(list(site.keys())) - set('OBSERVATIONS')}
 
-        master[site['STID']] = pd.DataFrame.from_dict(site['OBSERVATIONS'])
-        master[site['STID']] = master[site['STID']].set_index(pd.to_datetime(master[site['STID']]['date_time']))
-        master[site['STID']].attrs = {k: site[k] for k in set(list(site.keys())) - set('OBSERVATIONS')}
+    # Initialize data dictionary BEFORE the loop
+    data = {}
+    
+    # 2) Process data to get model data at each station location and time
+    for number, site in enumerate(pd.Series(obs.keys())):
+        print("\rloading data... "+ str(np.round((number/len(obs.keys()))*100, 3))+"%", end="\r")
 
-    #starting actual processing
-    for site,number in zip(pd.Series(master.keys()),range(len(pd.Series(master.keys())))):
-
-        print('\rassimilating data... '+ str(np.round((number/len(master.keys()))*100,3))+'%',end="\r")
-
-        uncorr = master[site]
-
+        # fix naming issues in synoptic data
+        uncorr = obs[site]
         df = {}
-
         for i in uncorr.keys():
             c = i
             if i.__contains__('_set_1')==True:
                 c = i.replace('_set_1','')
             if i.__contains__('_set_1d')==True:
                 c = i.replace('_set_1d','')
-
             df[c] = uncorr[i]
             df = pd.DataFrame.from_dict(df)
-
         df.attrs = uncorr.attrs
 
-
-        # lat,lon of each station needed for point selection of wrf data
+        # lat,lon of each station needed for point selection of model data
         lon = float(df.attrs['LONGITUDE'])
         lat = float(df.attrs['LATITUDE'])
         hgt = float(df.attrs['ELEVATION'])
 
+        # list of variables available in synoptic data
         varlist = []
-
         for i in df.keys():
             varlist.append(i)
 
-        #this allows me to only calculate wrf variables for data we also have obs for
+        # Key format: (STID, (lon, lat))
+        data[(df.attrs["STID"], (lon, lat))] = {"situ": [], "model": []}
+        data[(df.attrs["STID"], (lon, lat))]["situ"] = df
 
+        # working on the model data                
+        for count, step in enumerate(model.step.data):
+            # selecting time step
+            model_t = model.sel(step=step)
 
-        # creating key in data for this station
-
-        data[(df.attrs['STID'],(lon,lat))] = {'situ':[],'wrf':[]}
-
-        # appending sub dictionary with wx data
-
-        data[(df.attrs['STID'],(lon,lat))]['situ'] = df
-
-        #WX data complete, moving onto wrf...
-
-        # working on the grib file                
-
-        for step, count in zip(wrf1.step.data, np.arange(len(wrf1.step.data))):
-
-            wrf = wrf1.sel(step=step)
-
-            # grabbing wrf file
+            # selecting closest grid point to station
             if count == 0:
-                #squeeze bc time variable is 0, assuming 1 time output per file
-                longitude = (wrf.longitude + 180.) % 360 - 180.
-                latitude = wrf.latitude
-                
-                # thx stack. this is selecting wrf data at one point
-                abslat = np.abs(latitude-lat)
-
-                abslon = np.abs(longitude-lon)
-
-                c = abslon + abslat
-
-                try:
-                    ([xloc], [yloc]) = np.where(c == np.min(c))
-                except:
-                    (xloc, yloc) = (np.where(c == np.min(c))[0][0], np.where(c == np.min(c))[0][1])
-
-            wrf = wrf.isel(longitude=xloc, latitude=yloc)
+                # get 1d arrays of lat/lon
+                lat1d = np.asarray(model.latitude)
+                lon1d = to_lon180(np.asarray(model.longitude))
+                # distance using Haversine with broadcasting
+                rlat = np.deg2rad(lat1d)[:, None]
+                rlon = np.deg2rad(lon1d)[None, :]
+                rlat0 = np.deg2rad(lat)
+                rlon0 = np.deg2rad(lon)
+                dlat = rlat - rlat0
+                dlon = rlon - rlon0
+                a = np.sin(dlat/2.0)**2 + np.cos(rlat)*np.cos(rlat0)*np.sin(dlon/2.0)**2
+                yloc, xloc = np.unravel_index(np.nanargmin(a), a.shape)
+           
+            # selecting only that grid point
+            model_t = model_t.isel(longitude=xloc, latitude=yloc)
             
-            tempdf ={}
-
-            tempdf['date_time'] = pd.to_datetime(wrf.valid_time.data, utc=True)
-
-            #calculating wrf variables based on formulas in var_ref (an excel sheet i made)
-            for variable, name in zip(var_ref['variable'],var_ref['description']):
-
+            # creating temporary dataframe for this time step
+            tempdf = {}
+            tempdf["date_time"] = pd.to_datetime(model_t.valid_time.data, utc=True)
+            # calculating model variables based on formulas in var_ref (from csv)
+            for variable in var_ref["variable"]:
                 if variable in varlist:
-                    #print(variable)
-                    exec('tempdf[variable] =' + var_ref['formula'][list(var_ref['variable']).index(variable)])
+                    exec("tempdf[variable] =" + var_ref["formula"][list(var_ref["variable"]).index(variable)])
+            # adding to dataframe
+            tempdf = pd.DataFrame(tempdf, index=[0])
+            tempdf = tempdf.set_index(tempdf["date_time"])
 
-
-            tempdf = pd.DataFrame(tempdf,index=[0])
-
-            tempdf = tempdf.set_index(tempdf['date_time'])
-
-            if count ==0:
-                data[(df.attrs['STID'],(lon,lat))]['wrf'] = tempdf
+            # appending to data dictionary
+            if count == 0:
+                data[(df.attrs["STID"], (lon, lat))]["model"] = tempdf
             else:
-                data[(df.attrs['STID'],(lon,lat))]['wrf'] = pd.concat([data[(df.attrs['STID'],(lon,lat))]['wrf'],tempdf])
-            #done with wrf
+                data[(df.attrs["STID"], (lon, lat))]["model"] = pd.concat([
+                    data[(df.attrs["STID"], (lon, lat))]["model"], tempdf
+                ])
 
-    #saving, as this can take a while to run
-    with open(cwd+'/'+case_name+'_data.pkl', 'wb') as f:
+    # 3) Checkpoint resulting data
+    with open(osp.join(os.getcwd(), f"{case_name}_data.pkl"), "wb") as f:
         pickle.dump(data, f)
 
     return data
 
-#%% DATA PROCESSING
+#%% DATA PROCESSING Updated
+cwd = os.getcwd()
+def data_processing(data, cwd, freq):
+    """
+    Resample and align model and observation data to common time grid.
 
-def data_processing(data,cwd,freq):
+    Args:
+        data (dict): output from data_loading with station data
+        cwd (str): current working directory for saving output
+        freq (str): resampling frequency (e.g., '6h')
 
-    #effectively just resampling the data and making it pretty.
+    Returns:
+        processed (dict): dictionary with resampled 'situ' and 'model' dataframes per station
+    """
     print('\n')
-
     processed = {}
 
-    for key,count in zip(data.keys(),np.arange(0,len(data.keys()))):
+    # iterate through stations
+    for key, count in zip(data.keys(), np.arange(0, len(data.keys()))):
+        print('\rprocessing data... '+ str(np.round((count/len(data.keys()))*100, 3))+'%', end="\r")
+        
+        # normalize situ index to datetime UTC
+        data[key]['situ'] = data[key]['situ'].set_index(
+            pd.to_datetime(data[key]['situ'].index, utc=True)
+        )
 
-        print('\rprocessing data... '+ str(np.round((count/len(data.keys()))*100,3))+'%',end="\r")
-        #clipping to wrf time range (safest)
-        data[key]['situ'] = data[key]['situ'].set_index(pd.to_datetime(data[key]['situ'].index, utc=True))
-
-        # --- guards ---
+        # guards to skip broken stations
         if (
-            'wrf' not in data[key]
-            or data[key]['wrf'] is None
+            'model' not in data[key]
+            or data[key]['model'] is None
             or data[key]['situ'].empty
-            or data[key]['wrf'].empty
-            or 'date_time' not in data[key]['wrf']
+            or data[key]['model'].empty
+            or 'date_time' not in data[key]['model']
         ):
-            print(f"Skipping {key} (missing or empty data)")
+            print(f"\nSkipping {key} (missing or empty data)")
             continue
 
+        # compute overlapping time observations
         start = np.maximum(
-            data[key]['wrf']['date_time'].iloc[0],
+            data[key]['model']['date_time'].iloc[0],
             data[key]['situ'].index.min()
         )
         end = np.minimum(
-            data[key]['wrf']['date_time'].iloc[-1],
+            data[key]['model']['date_time'].iloc[-1],
             data[key]['situ'].index.max()
         )
-
+        # second layer of guards to prevent non-overlapping time ranges
         if start >= end:
-            print(f"Skipping {key} (no overlap between WRF and situ times)")
+            print(f"\nSkipping {key} (no overlap between model and situ times)")
             continue
 
-        time_wrf = pd.date_range(start, end, freq=freq)
-        if len(time_wrf) == 0:
-            print(f"Skipping {key} (empty time range)")
+        # rebuild regular time grid
+        time_model = pd.date_range(start, end, freq=freq)
+        # catches cases where start and end are identical
+        if len(time_model) == 0:
+            print(f"\nSkipping {key} (empty time range)")
             continue
-        # --- end guards ---
 
-
-        processed[key] = {'situ':[],'wrf':[]}
-        #resampling to freq (defined manually below)
-        data_slice = data[key]['situ'].loc[time_wrf[0]:time_wrf[-1]]
-        data_slice = data_slice.loc[~data_slice.index.duplicated(keep='first')]
-        processed[key]['situ'] = data_slice.rolling(freq).mean(numeric_only=True).interpolate(kind='linear').resample(freq).mean()
-        data_slice = data[key]['wrf'].loc[time_wrf[0]:time_wrf[-1]]
-        data_slice = data_slice.loc[~data_slice.index.duplicated(keep='first')]
-        processed[key]['wrf'] = data_slice.rolling(freq).mean(numeric_only=True).interpolate(kind='linear').resample(freq).mean()
+        # initialize ouput slots
+        processed[key] = {'situ': [], 'model': []}
         
-    #saving
-    with open(cwd+'/'+case_name+'_processed_data.pkl', 'wb') as g:
+        # Resampling situ data to freq
+        data_slice = data[key]['situ'].loc[time_model[0]:time_model[-1]]
+        # drop duplicate timestamps
+        data_slice = data_slice.loc[~data_slice.index.duplicated(keep='first')]
+        processed[key]['situ'] = (
+            data_slice.rolling(freq)
+            .mean(numeric_only=True)
+            .interpolate(kind='linear')    # interpolate linearly to fill small gaps
+            .resample(freq)
+            .mean()
+        )
+        
+        # Resampling model data to freq
+        data_slice = data[key]['model'].loc[time_model[0]:time_model[-1]]
+        data_slice = data_slice.loc[~data_slice.index.duplicated(keep='first')]
+        processed[key]['model'] = (
+            data_slice.rolling(freq)
+            .mean(numeric_only=True)
+            .interpolate(kind='linear')
+            .resample(freq)
+            .mean()
+        )
+        
+    # Saving
+    with open(cwd + '/' + case_name + '_processed_data.pkl', 'wb') as g:
         pickle.dump(processed, g)
 
     return processed
 
-#%% DATA EVALUATION
 
+#%% DATA EVALUATION
 def data_evaluation(processed,cwd, freq):
 
     print('\n')
@@ -336,17 +376,17 @@ def data_evaluation(processed,cwd, freq):
 
         try:
 
-            processed[key]['wrf'] = processed[key]['wrf'].tz_localize(tz='utc')
+            processed[key]['model'] = processed[key]['model'].tz_localize(tz='utc')
             processed[key]['situ'] = processed[key]['situ'].tz_localize(tz='utc')
 
-            time_wrf = pd.date_range(processed[key]['situ'].index[0],
+            time_model = pd.date_range(processed[key]['situ'].index[0],
                                      processed[key]['situ'].index[-1],
                                      freq=freq)
 
 
-            processed[key]['situ'] = ((processed[key]['situ'].loc[time_wrf[0]:time_wrf[-1]]))
+            processed[key]['situ'] = ((processed[key]['situ'].loc[time_model[0]:time_model[-1]]))
 
-            processed[key]['wrf'] = ((processed[key]['wrf'].loc[time_wrf[0]:time_wrf[-1]]))
+            processed[key]['model'] = ((processed[key]['model'].loc[time_model[0]:time_model[-1]]))
 
         except:
             continue
@@ -360,36 +400,36 @@ def data_evaluation(processed,cwd, freq):
 
             print('\revaluating data statistics... '+ str(np.round((count/len(processed.keys()))*100,3))+'%',end="\r")
 
-            for variable in processed[key]['wrf'].keys():
+            for variable in processed[key]['model'].keys():
                 if variable == 'date_time':
                     continue
                 else:
-                    evaluated[key][variable] = {'rmse':[rmse(processed[key]['wrf'][variable],
+                    evaluated[key][variable] = {'rmse':[rmse(processed[key]['model'][variable],
                                                              processed[key]['situ'][variable])],
 
-                                                'pearson':[pearson(processed[key]['wrf'][variable],
+                                                'pearson':[pearson(processed[key]['model'][variable],
                                                            processed[key]['situ'][variable])]
                                                     }
         except:
             continue
 
-    concat_wrf = {}
+    concat_model = {}
 
     concat_situ = {}
 
-    mean_wrf = {}
+    mean_model = {}
 
     mean_situ = {}
 
     for key in processed.keys():
 
-        for variable in processed[key]['wrf'].keys():
+        for variable in processed[key]['model'].keys():
 
             if variable == 'date_time':
                 continue
             else:
 
-                concat_wrf[variable] = pd.DataFrame()
+                concat_model[variable] = pd.DataFrame()
 
                 concat_situ[variable] = pd.DataFrame()
 
@@ -399,33 +439,33 @@ def data_evaluation(processed,cwd, freq):
 
         print('\rspatially concatenating data... '+ str(np.round((count/len(processed.keys()))*100,3))+'%',end="\r")
 
-        for variable in processed[key]['wrf'].keys():
+        for variable in processed[key]['model'].keys():
 
             if variable == 'date_time':
                 continue
 
             else:
 
-                concat_wrf[variable] = pd.concat([concat_wrf[variable],processed[key]['wrf'][variable]],axis=1)
+                concat_model[variable] = pd.concat([concat_model[variable],processed[key]['model'][variable]],axis=1)
 
                 concat_situ[variable] = pd.concat([concat_situ[variable],processed[key]['situ'][variable]],axis=1)
 
 
-    for variable in concat_wrf.keys():
-        mean_wrf[variable] = concat_wrf[variable].mean(axis=1)#.fillna(0).sort_index()#((concat_wrf[variable].sum(axis=1,numeric_only=True))/len(concat_wrf[variable].columns)).sort_index()
+    for variable in concat_model.keys():
+        mean_model[variable] = concat_model[variable].mean(axis=1)#.fillna(0).sort_index()#((concat_model[variable].sum(axis=1,numeric_only=True))/len(concat_model[variable].columns)).sort_index()
         mean_situ[variable] = concat_situ[variable].mean(axis=1)#.fillna(0).sort_index()#((concat_situ[variable].sum(axis=1,numeric_only=True))/len(concat_situ[variable].columns)).sort_index()
 
     with open(cwd+'/'+case_name+'_evaluated_data.pkl', 'wb') as a:
         pickle.dump(evaluated, a)
 
-    with open(cwd+'/'+case_name+'_wrfmean_data.pkl', 'wb') as b:
-        pickle.dump(mean_wrf, b)
+    with open(cwd+'/'+case_name+'_modelmean_data.pkl', 'wb') as b:
+        pickle.dump(mean_model, b)
 
     with open(cwd+'/'+case_name+'_situmean_data.pkl', 'wb') as c:
         pickle.dump(mean_situ, c)
 
 
-    return mean_wrf, mean_situ, evaluated
+    return mean_model, mean_situ, evaluated
 
 
 #%%WRAPPING IT UP
@@ -436,48 +476,87 @@ def rmse(predictions, targets):
 def pearson(predictions, targets):
     return scipy.stats.pearsonr(predictions,targets)[0]
 
-def the_whole_enchilada(path2obs,path2wrf,cwd,freq,):
+def the_whole_enchilada(path2obs, path2model, cwd, freq, evaluate=True):
+    """
+    Main pipeline function that handles loading, processing, and optionally evaluation.
 
-    try:
-        mean_wrf, mean_situ, evaluated = data_evaluation(pd.read_pickle(cwd+'/'+case_name+'_processed_data.pkl'),cwd, freq)
+    Args:
+        path2obs (str): path to observation data (Synoptic JSON)
+        path2model (str): path to model GRIB file
+        cwd (str): current working directory
+        freq (str): frequency for resampling (e.g., '6h')
+        evaluate (bool): if True, run evaluation. If False, only ensure processed data exists.
 
-    except:
+    Returns:
+        tuple: mean_model, mean_situ, evaluated if evaluate=True
+        None: if evaluate=False
+    """
+    processed_path = f"{cwd}/{case_name}_processed_data.pkl"
+    data_path = f"{cwd}/{case_name}_data.pkl"
+    
+    if evaluate:
+        # Run full evaluation pipeline
+        print("Starting full evaluation pipeline...")
 
         try:
+            # find and evaluate processed data
+            print(f"Attempting to load processed data from {processed_path}...")
+            mean_model, mean_situ, evaluated = data_evaluation(
+                pd.read_pickle(processed_path), cwd, freq
+            )
+            print("Successfully evaluated processed data.")
 
-            mean_wrf, mean_situ, evaluated = data_evaluation(data_processing(pd.read_pickle(cwd+'/'+case_name+'_data.pkl'),cwd,freq),cwd, freq)
+        except Exception as e1:
+            print(f"Processed data not found or invalid: {e1}")
+            try:
+                # if processed data not present, process raw data then evaluate
+                print(f"Attempting to process raw data from {data_path}...")
+                processed = data_processing(pd.read_pickle(data_path), cwd, freq)
+                print("Raw data processed. Running evaluation...")
+                mean_model, mean_situ, evaluated = data_evaluation(processed, cwd, freq)
+                print("Successfully evaluated newly processed data.")
 
-        except:
+            except Exception as e2:
+                print(f"Raw data not found or invalid: {e2}")
+                try:
+                    # if raw data not pressent load everything fresh, then process + evaluate
+                    print(f"Loading model data from {path2model}...")
+                    raw = data_loading(path2obs, case_name, path2model)
+                    print("Data loaded successfully. Beginning processing and evaluation...")
+                    processed = data_processing(raw, cwd, freq)
+                    mean_model, mean_situ, evaluated = data_evaluation(processed, cwd, freq)
+                    print("Full load + process + evaluation complete.")
+                except Exception as e3:
+                    print(f"Full evaluation pipeline failed: {e3}")
+                    return None
 
-            mean_wrf, mean_situ, evaluated = data_evaluation(data_processing(data_assimilation(path2obs,path2wrf,cwd),cwd,freq),cwd, freq)
+        return mean_model, mean_situ, evaluated
+    
+    else: ### Only ensure processed data exists, skip evaluation
+        if os.path.exists(processed_path):
+            # if processed data available, skip all together
+            print(f"Found existing {processed_path}, skipping processing")
+        else:
+            try:
+                if os.path.exists(data_path):
+                    # If raw data exists, just process it
+                    print(f"Found existing {data_path}, running data processing...")
+                    data_processing(pd.read_pickle(data_path), cwd, freq)
+                else:
+                    # load data from fresh, and process + evaluate
+                    print("No processed or raw data found, running full loading + processing")
+                    data_processing(data_loading(path2obs, case_name, path2model), cwd, freq)
+            except Exception as e:
+                print(f"Error during processing: {e}")
+        return None
 
-    return mean_wrf, mean_situ, evaluated
 
 #%% RUN ME
 
-
 if EVALUATE == True:
-    mean_wrf, mean_insitu, stats = the_whole_enchilada(path2obs, path2wrf, cwd, freq)
-
+    mean_model, mean_insitu, stats = the_whole_enchilada(path2obs, path2model, cwd, freq, evaluate=True)
 else:
-    # Skip evaluation: only make sure processed data exists
-    processed_path = f"{cwd}/{case_name}_processed_data.pkl"
-    data_path = f"{cwd}/{case_name}_data.pkl"
-
-    if os.path.exists(processed_path):
-        print(f"Found existing {processed_path}, skipping processing")
-
-    else:
-        try:
-            if os.path.exists(data_path):
-                print(f"Found existing {data_path}, running data processing...")
-                data_processing(pd.read_pickle(data_path), cwd, freq)
-            else:
-                print("No processed or raw data found, running full assimilation + processing")
-                data_processing(data_assimilation(path2obs, path2wrf, cwd), cwd, freq)
-        except Exception as e:
-            print(f"Error during processing: {e}")
-
+    the_whole_enchilada(path2obs, path2model, cwd, freq, evaluate=False)
 
 #%%
 
@@ -490,29 +569,29 @@ if PLOTTING == True:
     maxlat = 42.009518
     print('\n')
 
-    time = mean_wrf['air_temp'].index
+    time = mean_model['air_temp'].index
 
-    for var,count in zip(mean_wrf.keys(),np.arange(0,len(mean_wrf.keys()))):
+    for var,count in zip(mean_model.keys(),np.arange(0,len(mean_model.keys()))):
 
         if var=='fuel_moisture':
-            mean_wrf[var] = mean_wrf[var]*100
+            mean_model[var] = mean_model[var]*100
 
-        mean_wrf[var] = mean_wrf[var].sort_index()
+        mean_model[var] = mean_model[var].sort_index()
 
         mean_insitu[var] = mean_insitu[var].sort_index()
 
 
-        print('\rplotting data... '+ str(np.round((count/len(mean_wrf.keys()))*100,3))+'%',end="\r")
+        print('\rplotting data... '+ str(np.round((count/len(mean_model.keys()))*100,3))+'%',end="\r")
 
         try:
 
             plt.figure(figsize=(10,5),dpi=175)
-            plt.plot(time,mean_wrf[var],c='dodgerblue',label='Prediction')
+            plt.plot(time,mean_model[var],c='dodgerblue',label='Prediction')
             plt.plot(time,mean_insitu[var],c='red',label='Synoptic Measurement')
             plt.ylabel(var)
             plt.xlabel('Time (UTC)')
             plt.xticks(rotation=45)
-            plt.title(var+case_name+'\nTime Series RMSE: %s'%np.round(rmse(mean_wrf[var],mean_insitu[var]),2)+'\nTime Series Pearson: %s'%np.round(pearson(mean_wrf[var],mean_insitu[var]),2))
+            plt.title(var+case_name+'\nTime Series RMSE: %s'%np.round(rmse(mean_model[var],mean_insitu[var]),2)+'\nTime Series Pearson: %s'%np.round(pearson(mean_model[var],mean_insitu[var]),2))
             plt.ylabel(var)
             plt.legend(fontsize="x-large")
             #plt2.legend(fontsize="x-large")
@@ -529,7 +608,7 @@ if PLOTTING == True:
                 #plt.figure(figsize=(7,7),dpi=150)
                 plt.figure(figsize=(10,7),dpi=150)
 
-                line = [mean_wrf[var].max(),mean_insitu[var].max(),mean_wrf[var].min(),mean_insitu[var].min()]
+                line = [mean_model[var].max(),mean_insitu[var].max(),mean_model[var].min(),mean_insitu[var].min()]
 
                 plt.xlim(np.min(line),np.max(line))
 
@@ -539,15 +618,15 @@ if PLOTTING == True:
 
                 ax.plot([0, 1], [0, 1], transform=ax.transAxes,linestyle='--',color='black', label='f(x) = x')
 
-                plt.plot(np.arange(np.min(line),np.max(line)), np.poly1d(np.polyfit(mean_wrf[var], mean_insitu[var], 1))(np.arange(np.min(line),np.max(line))),linestyle='-',color='black', label = 'f(x) = '+str(np.poly1d(np.polyfit(mean_wrf[var], mean_insitu[var], 1)))[2:])
+                plt.plot(np.arange(np.min(line),np.max(line)), np.poly1d(np.polyfit(mean_model[var], mean_insitu[var], 1))(np.arange(np.min(line),np.max(line))),linestyle='-',color='black', label = 'f(x) = '+str(np.poly1d(np.polyfit(mean_model[var], mean_insitu[var], 1)))[2:])
 
-                plt.scatter(mean_wrf[var],mean_insitu[var],c='black')
+                plt.scatter(mean_model[var],mean_insitu[var],c='black')
 
-                plt.xlabel('WRF Predictions')
+                plt.xlabel('model Predictions')
 
                 plt.ylabel('Observed')
 
-                plt.title(var+'\nScatterplot RMSE: %s'%np.round(rmse(mean_wrf[var],mean_insitu[var]),2)+'\nScatterplot Pearson Correlation: %s'%np.round(pearson(mean_wrf[var],mean_insitu[var]),2))
+                plt.title(var+'\nScatterplot RMSE: %s'%np.round(rmse(mean_model[var],mean_insitu[var]),2)+'\nScatterplot Pearson Correlation: %s'%np.round(pearson(mean_model[var],mean_insitu[var]),2))
 
                 plt.legend(["Prediction, Measurement"],  fontsize="x-large")
 
@@ -591,18 +670,15 @@ if PLOTTING == True:
 
                     for name, coords in data.keys():
                         try:
+                            lon = float(data[name]['situ'].attrs['LONGITUDE'])
+                            lat = float(data[name]['situ'].attrs['LATITUDE'])
+                            x, y = map(lon, lat)
 
-                            x = (map(coords[0],coords[1])[0])
-                            y = (map(coords[0],coords[1])[1])
-
-                            # x.append(map(coords[0],coords[1])[0])
-                            # y.append(map(coords[0],coords[1])[1])
-
-                            u_wrf, v_wrf = wind_components(data[(name,coords)]['wrf']['wind_speed'].mean() * units('m/s'), data[(name,coords)]['wrf']['wind_direction'].mean() * units.deg)
+                            u_model, v_model = wind_components(data[(name,coords)]['model']['wind_speed'].mean() * units('m/s'), data[(name,coords)]['model']['wind_direction'].mean() * units.deg)
 
                             u_situ, v_situ = wind_components(data[(name,coords)]['situ']['wind_speed'].mean() * units('m/s'), data[(name,coords)]['situ']['wind_direction'].mean() * units.deg)
 
-                            map.barbs(x, y,u_wrf*1.94384, v_wrf*1.94384, color='dodgerblue',length=8, alpha=1)#, label='WRF Wind Avg.')
+                            map.barbs(x, y,u_model*1.94384, v_model*1.94384, color='dodgerblue',length=8, alpha=1)#, label='model Wind Avg.')
 
                             map.barbs(x, y,u_situ*1.94384, v_situ*1.94384, color='red',length=8, alpha=1)#, label='Station Wind Avg.')
 
@@ -613,7 +689,7 @@ if PLOTTING == True:
 
                     #map.barbs(x, y,u_situ, v_situ, color='red',length=5, alpha=0.5)
 
-                    plt.title('Average Station vs. WRF Wind Barb')
+                    plt.title('Average Station vs. model Wind Barb')
 
                     lons = [-124.409591, -114.131211]
                     lats = [32.534156, 42.009518]
@@ -627,14 +703,14 @@ if PLOTTING == True:
                     import matplotlib.patches as mpatches
 
                     red_patch = mpatches.Patch(color='red', label='Station Wind Avg.')
-                    blue_patch = mpatches.Patch(color='dodgerblue', label='WRF Wind Avg.')
+                    blue_patch = mpatches.Patch(color='dodgerblue', label='model Wind Avg.')
                     plt.legend(handles=[red_patch, blue_patch])
 
                     # plt.show()
                     plt.legend(["Prediction, Measurement"],  fontsize="x-large")
 
                     plt.colorbar(cb, fraction=0.033, pad=0.04,label='RMSE')
-                    plt.savefig(case_name+'WRFWindBarb'+var+'.png')
+                    plt.savefig(case_name+'modelWindBarb'+var+'.png')
 
 
 
@@ -663,9 +739,11 @@ if PLOTTING == True:
                 for name, coords in stats.keys():
                     try:
 
-                        c.append(stats[(name,coords)][var]['rmse'])
-                        x.append(map(coords[0],coords[1])[0])
-                        y.append(map(coords[0],coords[1])[1])
+                        lon = float(data[name]['situ'].attrs['LONGITUDE'])
+                        lat = float(data[name]['situ'].attrs['LATITUDE'])
+                        c.append(stats[name][var]['rmse'])
+                        X, Y = map(lon, lat)
+                        x.append(X); y.append(Y)
                         names.append(name)
 
                     except:

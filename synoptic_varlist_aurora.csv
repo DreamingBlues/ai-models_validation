@@ -1,0 +1,4 @@
+variable,description,unit,formula,wrfunits
+air_temp,Air Temperature (C),Celsius,"model_t['2t'].data - 273.15",C
+wind_speed,Wind Speed (m/s),m/s,"(mpcalc.wind_speed(model_t['10u'].data*units(""m/s""), model_t['10v'].data*units(""m/s"")).magnitude)",m/s
+wind_direction,Wind Direction (deg),Degrees,"mpcalc.wind_direction(model_t['10u'].data*units(""m/s""), model_t['10v'].data*units(""m/s"")).magnitude",degrees
