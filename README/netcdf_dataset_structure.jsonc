@@ -1,0 +1,89 @@
+// Abtin Olaee 2025
+
+{
+  // =====================================================================
+  // GLOBAL ATTRIBUTES (ds.attrs)
+  // Sticky metadata for the entire dataset.
+  // =====================================================================
+  "attrs": {
+    "title": "CA Aurora Surface Forecast",
+    "model": "Aurora",
+    "description": "Aurora surface variables masked to CA GeoJSON",
+    "init_time": "2025-01-01T00:00:00Z",
+    "geojson": "Con_Cali_Border_WGS84.geojson",
+    "resolution_deg": 0.25,
+    "original_grid_shape": [721, 1440],
+    "conventions": "CF-1.8" // Declares this follows international climate standards
+  },
+
+  // =====================================================================
+  // COORDINATES (ds.coords)
+  // These define the physical axes of your 3D cube.
+  // =====================================================================
+  "coords": {
+    "time": {
+      "dims": ["time"],
+      "attrs": { 
+        "standard_name": "time", 
+        "long_name": "forecast_valid_time", 
+        "timezone": "UTC"
+      },
+      "data": ["2025-01-01T00:00Z", "2025-01-01T06:00Z", "2025-01-01T12:00Z"]
+    },
+    "latitude": {
+      "dims": ["latitude"],
+      "attrs": { 
+        "units": "degrees_north", 
+        "standard_name": "latitude",
+        "axis": "Y"
+      },
+      "data": [34.65, 34.40, 34.10]
+    },
+    "longitude": {
+      "dims": ["longitude"],
+      "attrs": { 
+        "units": "degrees_east", 
+        "standard_name": "longitude",
+        "axis": "X"
+      },
+      "data": [-120.15, -120.00, -119.85]
+    }
+  },
+
+  // =====================================================================
+  // DATA VARIABLES (ds.data_vars)
+  // Physical data stored in 3D: (time, latitude, longitude)
+  // =====================================================================
+  "data_vars": {
+    "air_temp": {
+      "dims": ["time", "latitude", "longitude"],
+      "attrs": {
+        "units": "degC",
+        "standard_name": "air_temperature",
+        "long_name": "2-meter air temperature"
+      },
+      // Data is a 3D block: Each time-slice is a 2D map of CA
+      "data": "[[[12.1, 11.8, 10.9], ...], ...]" 
+    },
+
+    "wind_speed": {
+      "dims": ["time", "latitude", "longitude"],
+      "attrs": {
+        "units": "m s-1",
+        "standard_name": "wind_speed",
+        "long_name": "10-meter wind speed"
+      },
+      "data": "[[[5.4, 4.9, 4.3], ...], ...]"
+    },
+
+    "wind_direction": {
+      "dims": ["time", "latitude", "longitude"],
+      "attrs": {
+        "units": "degree",
+        "standard_name": "wind_from_direction", // Meteorological direction
+        "long_name": "10-meter wind direction"
+      },
+      "data": "[[[160, 170, 165], ...], ...]"
+    }
+  }
+}
