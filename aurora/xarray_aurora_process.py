@@ -18,10 +18,10 @@ from matplotlib.path import Path as MplPath
 CONFIG = {
     "grib_path_template": "/shome/u014930890/PGE_Projects/aurora_raw_data/data/aurora-2.5-pretrained_{day}.grib",
     "geojson_path": "/shome/u014930890/PGE_Projects/Con_Cali_Border_WGS84.geojson",
-    "var_ref_path": "/shome/u014930890/PGE_Projects/aurora_new/synoptic_varlist_aurora.csv",
-    "output_nc_template": "/shome/u014930890/PGE_Projects/aurora_new/processed_data/aurora_processed_CA_Day{day}.nc",
-    "model_name": "National Blend of Models (NBM)",
-    "description": "NBM surface variables masked to CA GeoJSON",
+    "var_ref_path": "/shome/u014930890/PGE_Projects/aurora/synoptic_varlist_aurora.csv,
+    "output_nc_template": "/shome/u014930890/PGE_Projects/aurora/processed_data/aurora_processed_CA_Day{day}.nc",
+    "model_name": "Aurora 2.5 Pretrained",
+    "description": "Aurora surface variables masked to CA GeoJSON",
 }
 
 # ==============================================================================
@@ -174,7 +174,7 @@ def get_spatial_subset(lats, lons, geojson_path):
 # ==============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="Process GRIB -> NetCDF (CA masked), using synoptic varlist.")
+    parser = argparse.ArgumentParser(description="Process GRIB -> NetCDF, using synoptic varlist.")
     parser.add_argument("--day", type=str, required=True)
     args = parser.parse_args()
 
@@ -282,7 +282,6 @@ def main():
             "longitude": (["longitude"], lon_1d, {"units": "degrees_east", "standard_name": "longitude", "axis": "X"}),
         },
         attrs={
-            "title": "CA NBM Surface Forecast",
             "model": CONFIG["model_name"],
             "description": CONFIG["description"],
             "init_time": times[0],
