@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # Abtin Olaee 2025
+
 """
 Build comparison table for multiple models (FCNet2, FCNet3, GraphCast, Aurora)
 with a green–yellow–red heatmap based on global min/max of each metric,
