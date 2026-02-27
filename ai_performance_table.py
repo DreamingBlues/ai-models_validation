@@ -17,11 +17,11 @@ from matplotlib.colorbar import ColorbarBase
 from pathlib import Path
 
 
-# -------------------------------------------------------------------
-# Configuration
-# -------------------------------------------------------------------
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
 region = "LA"
-AURORA_CSV     = f"/shome/u014930890/PGE_Projects/aurora_new/metrics/aurora_leadtime_metrics_{region}.csv"
+AURORA_CSV     = f"/shome/u014930890/PGE_Projects/aurora/metrics/aurora_leadtime_metrics_{region}.csv"
 FCNET2_CSV     = f"/shome/u014930890/PGE_Projects/FCNet2/metrics/fcn2_leadtime_metrics_{region}.csv"
 FCNET3_CSV     = f"/shome/u014930890/PGE_Projects/FCNet3/metrics/fcnet3_leadtime_metrics_{region}.csv"
 GRAPHCAST_CSV  = f"/shome/u014930890/PGE_Projects/graphcast/metrics/graphcast_leadtime_metrics_{region}.csv"
@@ -32,9 +32,9 @@ OUT_FIG        = f"/shome/u014930890/PGE_Projects/figs/ai_performance_heatmap_{r
 LEAD_ORDER = [144, 96, 48, 24, 0]
 
 
-# -------------------------------------------------------------------
-# Helpers
-# -------------------------------------------------------------------
+# =============================================================================
+# HELPERS
+# =============================================================================
 def load_and_order(path):
     df = pd.read_csv(path)
     cat = pd.Categorical(df["Lead_Hours"], LEAD_ORDER, ordered=True)
@@ -47,8 +47,12 @@ def lead_label(hours):
     return "Current" if h == 0 else f"{h}hr"
 
 
+
+# =============================================================================
+# MAIN
+# =============================================================================
 def main():
-    # Load data for each model
+    # 1. Load data for each model
     df_fc2 = load_and_order(FCNET2_CSV)
     df_fc3 = load_and_order(FCNET3_CSV)
     df_gc  = load_and_order(GRAPHCAST_CSV)
@@ -63,9 +67,8 @@ def main():
         df_au["Model"].iloc[0].split()[0],  # "Aurora"
     ]
 
-    # ------------------------------------------------------------------
-    # Global min / max per metric across ALL models
-    # ------------------------------------------------------------------
+
+    # 2. Sort global min / max per metric across all models
     all_df = pd.concat(dfs, ignore_index=True)
 
     metric_minmax = {
@@ -75,7 +78,9 @@ def main():
         "Corr": (all_df["Correlation"].min(), all_df["Correlation"].max()),
     }
 
-    # Green → Yellow → Red (bright)
+
+    # 3. Set color map
+    # Green → Yellow → Red 
     cmap = LinearSegmentedColormap.from_list(
         "green_yellow_red",
         [
@@ -95,11 +100,9 @@ def main():
         score = min(max(score, 0.0), 1.0)
         return cmap(score)
 
-    # ------------------------------------------------------------------
-    # Build table data
-    # ------------------------------------------------------------------
-    # Assume all dfs share the same Lead_Hours ordering/length
-    n_rows = len(dfs[0])
+
+    # 3. Build table data
+    n_rows = len(dfs[0])     # Assume all dfs share the same Lead_Hours ordering/length
 
     rows = []
     for i in range(n_rows):
@@ -127,9 +130,8 @@ def main():
         if m_idx != len(dfs) - 1:
             col_labels.append("")  # spacer
 
-    # ------------------------------------------------------------------
-    # Create figure and table
-    # ------------------------------------------------------------------
+
+    # 4. Style table
     fig, ax = plt.subplots(figsize=(12, 4))
     ax.axis("off")
 
@@ -200,9 +202,7 @@ def main():
     # slimmer horizontal padding
     table.scale(0.85, 1.6)
 
-    # ------------------------------------------------------------------
-    # Apply heatmap colors to metric cells
-    # ------------------------------------------------------------------
+    # 5. Apply heatmap colors to metric cell
     metric_names = ["RMSE", "MAE", "MAPE", "Corr"]
     better_low_flags = {"RMSE": True, "MAE": True, "MAPE": True, "Corr": False}
 
@@ -236,9 +236,7 @@ def main():
             cell = table[(r, c)]
             cell.set_facecolor(color)
 
-    # ------------------------------------------------------------------
-    # Add model group titles above table
-    # ------------------------------------------------------------------
+    # 6. Add model group titles above table
     fig.canvas.draw()
 
     renderer = fig.canvas.get_renderer()
@@ -270,9 +268,7 @@ def main():
             fontsize=10, fontweight="bold"
         )
 
-    # ------------------------------------------------------------------
-    # Add legend (colorbar) at the bottom
-    # ------------------------------------------------------------------
+    # 7. Add legend (colorbar) at the bottom
     fig.subplots_adjust(bottom=0.22)
 
     cax = fig.add_axes([0.15, 0.06, 0.7, 0.04])
