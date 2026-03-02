@@ -1,5 +1,5 @@
 # README: station_data.nc
-# Abtin Olaee 2025
+# Abtin Olaee 2026
 
 ## Overview
 This file (`station_data.nc`) contains point-based surface meteorological observations derived from the Synoptic API. It has been processed into a **2D Orthogonal Array (Station × Time)** format for efficient analysis, machine learning, and model validation.

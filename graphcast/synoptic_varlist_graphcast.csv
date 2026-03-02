@@ -1,0 +1,4 @@
+standard_name,raw_short_name,standard_units,raw_units
+t2m,2t,degC,K
+u10,10u,m s-1,m s-1
+v10,10v,m s-1,m s-1
