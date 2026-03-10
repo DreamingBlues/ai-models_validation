@@ -1,5 +1,8 @@
 # README: station_data.nc
-# Abtin Olaee 2026
+**Abtin Olaee 2026**
+
+## Liscense
+Data downloaded Courtesy of Synoptic Data PBC
 
 ## Overview
 This file (`station_data.nc`) contains point-based surface meteorological observations derived from the Synoptic API. It has been processed into a **2D Orthogonal Array (Station × Time)** format for efficient analysis, machine learning, and model validation.
@@ -46,6 +49,7 @@ Each variable is a 2D matrix of shape `(station, time)`.
 *(Note: The file contains all numeric variables found in the raw source, typically ~40-50 variables total.)*
 
 ## Dataset Structure
+```text
 <xarray.Dataset>
 Dimensions:      (station: 4024, time: 41)
 Coordinates:
@@ -58,7 +62,7 @@ Data variables:
     air_temp     (station, time) float32 15.2 15.5 ...      <-- The "Tabs" (2D)
     wind_speed   (station, time) float32 3.5 4.1 ...        <-- The "Tabs" (2D)
     pressure     (station, time) float32 1013 1012 ...      <-- The "Tabs" (2D)
-
+```
 
 ## Data Processing & QA
 1.  **Time Alignment:**
