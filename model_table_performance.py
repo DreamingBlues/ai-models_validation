@@ -19,7 +19,7 @@ from pathlib import Path
 # =============================================================================
 CONFIG = {
     "MODEL_CSV": "./{model_abr}/metrics/{model_abr}_leadtime_metrics_{region}.csv",
-    "OUT_FIG":   "./figs/ai_performance_heatmap_{region}.png"
+    "OUT_FIG":   "./figs/tables/ai_performance_heatmap_{region}.png"
 }
 
 MODELS = {
