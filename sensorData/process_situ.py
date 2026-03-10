@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Abtin Olaee 2026
 
 import json
