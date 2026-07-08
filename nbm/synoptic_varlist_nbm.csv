@@ -1,0 +1,4 @@
+standard_name,raw_short_name,standard_units,raw_units
+t2m,2t,degC,K
+wind_speed,10si,m s-1,m s-1
+wind_direction,10di,degree,degree

@@ -9,6 +9,7 @@ import json
 import argparse
 import pandas as pd
 import xarray as xr
+from tqdm import tqdm
 from datetime import datetime
 from matplotlib.path import Path as MplPath
 
@@ -16,33 +17,17 @@ from matplotlib.path import Path as MplPath
 # CONFIGURATION
 # ==============================================================================
 CONFIG = {
-    "raw_path_template": "../aurora_raw_data/data/aurora-2.5-pretrained_{day}.grib",
+    "raw_path_template": "./ifs_raw_data/202501{day}/ifs_hres.grib",
     "geojson_path": "./Con_Cali_Border_WGS84.geojson",
-    "var_ref_path": "./aurora/synoptic_varlist_aurora.csv",
-    "output_nc_template": "./aurora/processed_data/aurora_processed_CA_Day{day}.nc",
-    "model_name": "Aurora 2.5 Pretrained",
-    "description": "Aurora surface variables masked to CA GeoJSON",
+    "var_ref_path": "./ifs/synoptic_varlist_ifs.csv",
+    "output_nc_template": "./ifs/processed_data/ifs_processed_CA_Day{day}.nc",
+    "model_name": "IFS",
+    "description": "IFS surface variables masked to CA GeoJSON",
 }
 
-# =============================================================================
+# ==============================================================================
 # HELPERS
-# =============================================================================
-
-def progress(prefix, i, total, width=40):
-    if total <= 0:
-        return
-    frac = i / total
-    filled = int(width * frac)
-    bar = "#" * filled + "-" * (width - filled)
-    pct = int(frac * 100)
-    sys.stdout.write(f"\r{prefix} [{bar}] {pct:3d}% ({i}/{total})")
-    sys.stdout.flush()
-    if i >= total:
-        sys.stdout.write("\n")
-        sys.stdout.flush()
-
-
-
+# ==============================================================================
 def load_var_ref(csv_path):
     """
     CSV schema:
@@ -96,13 +81,14 @@ def convert_to_standard_units(var_name, data, raw_units):
     raise ValueError(f"Unknown variable: {var_name}")
 
 
-
 def calculate_wind(u, v):
     ws = np.sqrt(u**2 + v**2)
     wd = (270 - np.degrees(np.arctan2(v, u))) % 360
     return ws, wd
 
-
+# ==============================================================================
+# GEOJSON MASKING
+# ==============================================================================
 
 def _iter_polygons_from_geojson(geojson_obj):
     def polygon_from_coords(coords):
@@ -120,7 +106,6 @@ def _iter_polygons_from_geojson(geojson_obj):
                 yield polygon_from_coords(poly)
 
 
-
 def get_spatial_subset(lats, lons, geojson_path):
     print(f"Loading GeoJSON: {geojson_path}")
     with open(geojson_path) as f:
@@ -135,8 +120,7 @@ def get_spatial_subset(lats, lons, geojson_path):
     polys = list(_iter_polygons_from_geojson(gj))
     print(f"Building mask from {len(polys)} polygons...")
 
-    total = len(polys)
-    for idx, (exterior, holes) in enumerate(polys, start=1):
+    for exterior, holes in polys:
         path = MplPath(exterior)
         ext = path.get_extents()
 
@@ -144,14 +128,13 @@ def get_spatial_subset(lats, lons, geojson_path):
             (flat_lons >= ext.xmin) & (flat_lons <= ext.xmax) &
             (flat_lats >= ext.ymin) & (flat_lats <= ext.ymax)
         )
+        
         if np.any(bbox_idx):
             subset_points = points[bbox_idx]
             is_inside = path.contains_points(subset_points, radius=0.25)
             for hole in holes:
                 is_inside &= ~MplPath(hole).contains_points(subset_points, radius=0.25)
             mask[bbox_idx] |= is_inside
-
-        progress("Mask polygons", idx, total)
 
     mask_2d = mask.reshape(lats.shape)
     if not np.any(mask_2d):
@@ -167,8 +150,6 @@ def get_spatial_subset(lats, lons, geojson_path):
     mask_crop = mask_2d[slice_y, slice_x]
     print(f"Cropped Grid Shape: {mask_crop.shape}")
     return slice_y, slice_x, mask_crop
-
-
 
 # ==============================================================================
 # MAIN
@@ -230,29 +211,31 @@ def main():
 
     data_by_time = {}
     
-    # We iterate directly.    
     msg_count = 0
-    for grb in grbs:
-        msg_count += 1
-        
-        # Check shortName (fast string check)
-        if grb.shortName not in raw_shortnames_needed:
-            continue
+    with tqdm(desc="Scanning GRIB", unit="msg") as pbar:
+        for grb in grbs:
+            pbar.update(1)
             
-        # Extract data (only if we need it)
-        ts = grb.validDate.isoformat()
-        
-        # Optimization: Only extract the sliced subset
-        val = grb.values[slice_y, slice_x]
-        
-        data_by_time.setdefault(ts, {})[grb.shortName] = val
-        
-        # Simple counter progress (since we don't know total)
-        if msg_count % 100 == 0:
-            sys.stdout.write(f"\rProcessing messages...")
-            sys.stdout.flush()
+            # Skip if not in our required list
+            if grb.shortName not in raw_shortnames_needed:
+                continue
+            
+            # --- THE FIX: ALL OF THIS MUST BE INDENTED INSIDE THE FOR LOOP ---
+            
+            # Extract data
+            ts = int(grb.step)        
+            
+            # Optimization: Only extract the sliced subset
+            val = grb.values[slice_y, slice_x]
+            
+            data_by_time.setdefault(ts, {})[grb.shortName] = val
+            
+            # Increment our counter since we found a valid message
+            msg_count += 1
+            
+            # ------------------------------------------------------------------
 
-    sys.stdout.write(f"\rProcessed {msg_count} messages. Done.\n")
+    sys.stdout.write(f"\nProcessed {msg_count} valid messages. Done.\n")
     grbs.close()
 
     times = sorted(data_by_time.keys())
@@ -269,7 +252,7 @@ def main():
     u10_ms = np.full((nt, ny, nx), np.nan, dtype=np.float32)
     v10_ms = np.full((nt, ny, nx), np.nan, dtype=np.float32)
 
-    for i, ts in enumerate(times, start=1):
+    for i, ts in enumerate(times):
         raw_fields = data_by_time[ts]
 
         for std_name, meta in var_meta.items():
@@ -279,16 +262,17 @@ def main():
 
             arr = raw_fields[raw_sn]
             arr = convert_to_standard_units(std_name, arr, meta["raw_units"])
+            
+            # Apply the mask (setting everything outside CA to NaN)
             arr[~mask] = np.nan
 
+            # Use i directly (since it starts at 0)
             if std_name == "t2m":
-                t2m_c[i - 1]  = arr
+                t2m_c[i] = arr
             elif std_name == "u10":
-                u10_ms[i - 1] = arr
+                u10_ms[i] = arr
             elif std_name == "v10":
-                v10_ms[i - 1] = arr
-
-        progress("Process times", i, nt)
+                v10_ms[i] = arr
 
     ws, wd = calculate_wind(u10_ms, v10_ms)
 
@@ -304,14 +288,14 @@ def main():
                                {"units": "degree", "standard_name": "wind_from_direction", "long_name": "10-meter wind direction"}),
         },
         coords={
-            "time": pd.to_datetime([datetime.fromisoformat(t) for t in times]),
+            "time": pd.to_datetime([first_msg.analDate + pd.Timedelta(hours=t) for t in times]),
             "latitude": (["latitude"], lat_1d, {"units": "degrees_north", "standard_name": "latitude", "axis": "Y"}),
             "longitude": (["longitude"], lon_1d, {"units": "degrees_east", "standard_name": "longitude", "axis": "X"}),
         },
         attrs={
             "model": CONFIG["model_name"],
             "description": CONFIG["description"],
-            "init_time": times[0],
+            "init_time": first_msg.analDate.isoformat(),
             "geojson": pathlib.Path(CONFIG["geojson_path"]).name,
             "resolution_deg": float(abs(lat_1d[1] - lat_1d[0])) if len(lat_1d) > 1 else np.nan,
             "original_grid_shape": list(lats.shape),

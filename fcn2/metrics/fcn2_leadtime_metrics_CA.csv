@@ -1,6 +1,0 @@
-Model,Run_Day,Lead_Hours,N_Common,RMSE,MAE,MAPE,Correlation
-Fourcastnetv2-small,01,144,41,0.7849,0.6434,27.0396,0.8633
-Fourcastnetv2-small,03,96,33,0.6276,0.5323,22.2232,0.9119
-Fourcastnetv2-small,05,48,25,0.8237,0.6495,26.9289,0.8426
-Fourcastnetv2-small,06,24,21,1.1019,0.9586,36.0176,0.7879
-Fourcastnetv2-small,07,0,17,0.9689,0.8187,29.4333,0.8196

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # Abtin Olaee 2026
 
-import pygrib
 import numpy as np
 import pathlib
 import sys
@@ -9,19 +8,19 @@ import json
 import argparse
 import pandas as pd
 import xarray as xr
-from datetime import datetime
+from datetime import datetime, timedelta
 from matplotlib.path import Path as MplPath
 
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
 CONFIG = {
-    "raw_path_template": "../aurora_raw_data/data/aurora-2.5-pretrained_{day}.grib",
+    "raw_path_template": "/fs/ember-fs2/adata/afarguell/ai_models/earth2studio/fcn3_det_2025-01-{day}T00:00.nc",
     "geojson_path": "./Con_Cali_Border_WGS84.geojson",
-    "var_ref_path": "./aurora/synoptic_varlist_aurora.csv",
-    "output_nc_template": "./aurora/processed_data/aurora_processed_CA_Day{day}.nc",
-    "model_name": "Aurora 2.5 Pretrained",
-    "description": "Aurora surface variables masked to CA GeoJSON",
+    "var_ref_path": "./fcn3/synoptic_varlist_fcn3.csv",
+    "output_nc_template": "./fcn3/processed_data/fcn3_processed_CA_Day{day}.nc",
+    "model_name": "FourcastnetV3 Deterministic",
+    "description": "FourcastnetV3 surface variables masked to CA GeoJSON",
 }
 
 # =============================================================================
@@ -146,6 +145,7 @@ def get_spatial_subset(lats, lons, geojson_path):
         )
         if np.any(bbox_idx):
             subset_points = points[bbox_idx]
+            # allow for boundary cells to be included
             is_inside = path.contains_points(subset_points, radius=0.25)
             for hole in holes:
                 is_inside &= ~MplPath(hole).contains_points(subset_points, radius=0.25)
@@ -184,117 +184,105 @@ def main():
     )
     args = parser.parse_args()
 
+    # FIX 1: Ensure variable names match
     model_file = CONFIG["raw_path_template"].format(day=args.day)
     output_nc = CONFIG["output_nc_template"].format(day=args.day)
 
-    print(f"Input GRIB: {model_file}")
+    print(f"Input NetCDF: {model_file}")
     print(f"Output NC:  {output_nc}")
 
     # Step 1: Read varlist
     print("Step 1/5: Loading varlist...")
     var_meta = load_var_ref(CONFIG["var_ref_path"])
-    raw_shortnames_needed = {m["raw_short_name"] for m in var_meta.values()}
+    # We don't strictly need raw_shortnames_needed logic anymore, but keeping it doesn't hurt.
     print(f"Varlist standard_names: {list(var_meta.keys())}")
-    print(f"Looking for GRIB shortNames: {sorted(raw_shortnames_needed)}")
 
     # Step 2: Init grid + mask
-    print("Step 2/5: Opening GRIB and building CA mask...")
-    grbs = pygrib.open(model_file)
-
-    # Get the first message by advancing the iterator once
+    print("Step 2/5: Opening NetCDF and building CA mask...")
     try:
-        first_msg = next(grbs)
-    except StopIteration:
-        print("[Error] GRIB file is empty.")
+        # FIX 1: Use model_file here
+        ds_in = xr.open_dataset(model_file)
+    except Exception as e:
+        print(f"Error opening NetCDF: {e}")
         return
 
-    # Get lat/lon from first message
-    lats, lons = first_msg.latlons()
-    lats = lats.astype(np.float32)
-    lons = lons.astype(np.float32)
+    # FCN3 has 1D lat/lon arrays; we need 2D meshgrid for the masker
+    lat_1d_in = ds_in['lat'].values
+    lon_1d_in = ds_in['lon'].values
+    lons_2d, lats_2d = np.meshgrid(lon_1d_in, lat_1d_in)
 
-    # Build Mask
+    # Use lats_2d/lons_2d for the spatial subset function
+    lats, lons = lats_2d, lons_2d
+
     slice_y, slice_x, mask = get_spatial_subset(lats, lons, CONFIG["geojson_path"])
     if slice_y is None:
         print("No data inside mask.")
         return
-    
+
+    # These are the cropped 1D coordinates we will use for output
     lat_1d = lats[slice_y, slice_x][:, 0]
     lon_1d = ((lons[slice_y, slice_x] + 180) % 360 - 180)[0, :]
 
-    # Step 3: Scan GRIB messages (progress by message count estimate)
-    print("Step 3/5: Scanning GRIB messages...")
+    # Step 3: Parse Time Dimension (Lead Time handling)
+    print("Step 3/5: parsing time dimension...")
     
-    # Rewind to start because 'next()' consumed the first message
-    grbs.rewind()
-
-    data_by_time = {}
+    # Get base time (e.g., 2025-01-01 00:00)
+    base_time_val = ds_in['time'].values[0]
+    base_time = pd.to_datetime(base_time_val)
     
-    # We iterate directly.    
-    msg_count = 0
-    for grb in grbs:
-        msg_count += 1
-        
-        # Check shortName (fast string check)
-        if grb.shortName not in raw_shortnames_needed:
-            continue
-            
-        # Extract data (only if we need it)
-        ts = grb.validDate.isoformat()
-        
-        # Optimization: Only extract the sliced subset
-        val = grb.values[slice_y, slice_x]
-        
-        data_by_time.setdefault(ts, {})[grb.shortName] = val
-        
-        # Simple counter progress (since we don't know total)
-        if msg_count % 100 == 0:
-            sys.stdout.write(f"\rProcessing messages...")
-            sys.stdout.flush()
-
-    sys.stdout.write(f"\rProcessed {msg_count} messages. Done.\n")
-    grbs.close()
-
-    times = sorted(data_by_time.keys())
+    # Get lead times (e.g., [0, 6, 12, ...])
+    lead_times = ds_in['lead_time'].values
     
-    if not times:
-        print("[Error] No matching GRIB messages found for requested shortNames.")
-        return
-        
-    # Step 4: Convert + compute derived outputs
-    print("Step 4/5: Converting to standard units and computing wind products...")
-    nt, ny, nx = len(times), mask.shape[0], mask.shape[1]
+    # Calculate valid timestamps for output
+    valid_times = [base_time + timedelta(hours=int(lt)) for lt in lead_times]
+    nt = len(valid_times)
+    
+    print(f"Found {nt} time steps (Lead times: {lead_times[0]} to {lead_times[-1]} hrs)")
 
+    # FIX 2: Deleted "data_by_time" check (leftover from GRIB logic)
+
+    # Step 4: Extract Data & Convert
+    print("Step 4/5: Extracting variables and converting units...")
+
+    # Initialize output arrays (Time, Lat, Lon)
+    ny, nx = mask.shape
     t2m_c = np.full((nt, ny, nx), np.nan, dtype=np.float32)
     u10_ms = np.full((nt, ny, nx), np.nan, dtype=np.float32)
     v10_ms = np.full((nt, ny, nx), np.nan, dtype=np.float32)
 
-    for i, ts in enumerate(times, start=1):
-        raw_fields = data_by_time[ts]
+    for i, lt in enumerate(lead_times):
+        # We access data via .isel(time=0, lead_time=i)
+        
+        # --- Temperature (t2m) ---
+        if 't2m' in ds_in:
+            # Extract and mask immediately
+            raw = ds_in['t2m'].isel(time=0, lead_time=i)[slice_y, slice_x].values
+            # Convert K -> C (assumes input is K)
+            t2m_c[i] = raw - 273.15
+            t2m_c[i][~mask] = np.nan
 
-        for std_name, meta in var_meta.items():
-            raw_sn = meta["raw_short_name"]
-            if raw_sn not in raw_fields:
-                continue
+        # --- U Component (u10m) ---
+        if 'u10m' in ds_in:
+            raw = ds_in['u10m'].isel(time=0, lead_time=i)[slice_y, slice_x].values
+            u10_ms[i] = raw
+            u10_ms[i][~mask] = np.nan
 
-            arr = raw_fields[raw_sn]
-            arr = convert_to_standard_units(std_name, arr, meta["raw_units"])
-            arr[~mask] = np.nan
+        # --- V Component (v10m) ---
+        if 'v10m' in ds_in:
+            raw = ds_in['v10m'].isel(time=0, lead_time=i)[slice_y, slice_x].values
+            v10_ms[i] = raw
+            v10_ms[i][~mask] = np.nan
+        
+        progress("Processing lead times", i + 1, nt)
 
-            if std_name == "t2m":
-                t2m_c[i - 1]  = arr
-            elif std_name == "u10":
-                u10_ms[i - 1] = arr
-            elif std_name == "v10":
-                v10_ms[i - 1] = arr
-
-        progress("Process times", i, nt)
-
+    ds_in.close()
+    
+    # Calculate Wind Speed / Direction
     ws, wd = calculate_wind(u10_ms, v10_ms)
 
-    # Step 5: Build dataset + write NetCDF (simple progress: build then write)
-    print("Step 5/5: Writing NetCDF...")
-    ds = xr.Dataset(
+    # Step 5: Write NetCDF (Using xarray)
+    print("Step 5/5: Writing Output NetCDF...")
+    ds_out = xr.Dataset(
         data_vars={
             "air_temp": (["time", "latitude", "longitude"], t2m_c,
                          {"units": "degC", "standard_name": "air_temperature", "long_name": "2-meter air temperature"}),
@@ -304,34 +292,34 @@ def main():
                                {"units": "degree", "standard_name": "wind_from_direction", "long_name": "10-meter wind direction"}),
         },
         coords={
-            "time": pd.to_datetime([datetime.fromisoformat(t) for t in times]),
+            # Ensure valid_times are converted to pandas datetimes to match original format
+            "time": pd.to_datetime(valid_times),
+            # FIX 3: Use lat_1d / lon_1d (not lat_1d_out)
             "latitude": (["latitude"], lat_1d, {"units": "degrees_north", "standard_name": "latitude", "axis": "Y"}),
             "longitude": (["longitude"], lon_1d, {"units": "degrees_east", "standard_name": "longitude", "axis": "X"}),
         },
         attrs={
             "model": CONFIG["model_name"],
             "description": CONFIG["description"],
-            "init_time": times[0],
+            "init_time": valid_times[0].isoformat(),
             "geojson": pathlib.Path(CONFIG["geojson_path"]).name,
+            # FIX 3: Use lat_1d
             "resolution_deg": float(abs(lat_1d[1] - lat_1d[0])) if len(lat_1d) > 1 else np.nan,
-            "original_grid_shape": list(lats.shape),
+            "original_grid_shape": list(lats_2d.shape), 
             "conventions": "CF-1.8",
         },
     )
 
-    # Compression + chunking
+    # Compression & Saving
     chunk_lat = min(ny, 64)
     chunk_lon = min(nx, 64)
     enc = {
-        v: {"zlib": True, "shuffle": True, "complevel": 5,
-            "_FillValue": np.nan, "chunksizes": (1, ny, nx)}
-        for v in ds.data_vars
+        v: {"zlib": True, "shuffle": True, "complevel": 5, "_FillValue": np.nan, "chunksizes": (1, ny, nx)}
+        for v in ds_out.data_vars
     }
 
-    # No fine-grained progress available inside to_netcdf
-    ds.to_netcdf(output_nc, engine="h5netcdf", encoding=enc)
+    ds_out.to_netcdf(output_nc, engine="h5netcdf", encoding=enc)
     print(f"Saved: {output_nc}")
-
 
 if __name__ == "__main__":
     main()

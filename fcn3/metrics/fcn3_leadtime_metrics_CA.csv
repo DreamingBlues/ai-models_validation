@@ -1,6 +1,0 @@
-Model,Run_Day,Lead_Hours,N_Common,RMSE,MAE,MAPE,Correlation
-FourcastnetV3 Deterministic,01,144,41,0.6128,0.4491,18.5946,0.7239
-FourcastnetV3 Deterministic,03,96,33,0.4621,0.3541,15.4630,0.8435
-FourcastnetV3 Deterministic,05,48,25,0.5360,0.3986,15.6466,0.8639
-FourcastnetV3 Deterministic,06,24,21,0.5800,0.4804,18.0422,0.8804
-FourcastnetV3 Deterministic,07,0,17,0.5813,0.4897,16.7440,0.8621

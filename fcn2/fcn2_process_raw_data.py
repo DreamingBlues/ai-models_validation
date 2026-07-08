@@ -16,17 +16,17 @@ from matplotlib.path import Path as MplPath
 # CONFIGURATION
 # ==============================================================================
 CONFIG = {
-    "raw_path_template": "../aurora_raw_data/data/aurora-2.5-pretrained_{day}.grib",
+    "raw_path_template": "../fourcastnetv2_10day/data/fourcastnetv2-small-{day}.grib",
     "geojson_path": "./Con_Cali_Border_WGS84.geojson",
-    "var_ref_path": "./aurora/synoptic_varlist_aurora.csv",
-    "output_nc_template": "./aurora/processed_data/aurora_processed_CA_Day{day}.nc",
-    "model_name": "Aurora 2.5 Pretrained",
-    "description": "Aurora surface variables masked to CA GeoJSON",
+    "var_ref_path": "./fcn2/synoptic_varlist_fcn2.csv",
+    "output_nc_template": "./fcn2/processed_data/fcn2_processed_CA_Day{day}.nc",
+    "model_name": "FourcastnetV2-small",
+    "description": "FourcastnetV2-small surface variables masked to CA GeoJSON",
 }
 
-# =============================================================================
-# HELPERS
-# =============================================================================
+# ==============================================================================
+# SIMPLE PROGRESS BAR (no external deps)
+# ==============================================================================
 
 def progress(prefix, i, total, width=40):
     if total <= 0:
@@ -41,7 +41,9 @@ def progress(prefix, i, total, width=40):
         sys.stdout.write("\n")
         sys.stdout.flush()
 
-
+# ==============================================================================
+# VARLIST + UNIT NORMALIZATION
+# ==============================================================================
 
 def load_var_ref(csv_path):
     """
@@ -66,7 +68,6 @@ def load_var_ref(csv_path):
             "standard_units": str(row["standard_units"]).strip(),
         }
     return var_meta
-
 
 
 def convert_to_standard_units(var_name, data, raw_units):
@@ -96,13 +97,14 @@ def convert_to_standard_units(var_name, data, raw_units):
     raise ValueError(f"Unknown variable: {var_name}")
 
 
-
 def calculate_wind(u, v):
     ws = np.sqrt(u**2 + v**2)
     wd = (270 - np.degrees(np.arctan2(v, u))) % 360
     return ws, wd
 
-
+# ==============================================================================
+# GEOJSON MASKING
+# ==============================================================================
 
 def _iter_polygons_from_geojson(geojson_obj):
     def polygon_from_coords(coords):
@@ -118,7 +120,6 @@ def _iter_polygons_from_geojson(geojson_obj):
         elif geom["type"] == "MultiPolygon":
             for poly in geom["coordinates"]:
                 yield polygon_from_coords(poly)
-
 
 
 def get_spatial_subset(lats, lons, geojson_path):
@@ -167,8 +168,6 @@ def get_spatial_subset(lats, lons, geojson_path):
     mask_crop = mask_2d[slice_y, slice_x]
     print(f"Cropped Grid Shape: {mask_crop.shape}")
     return slice_y, slice_x, mask_crop
-
-
 
 # ==============================================================================
 # MAIN
