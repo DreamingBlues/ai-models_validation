@@ -2,11 +2,14 @@
 
 ## Overview
 
-This repository contains a Python-based workflow for validating AI and numerical weather prediction (NWP) model forecasts against station-based surface observations. The project focuses on evaluating 10-meter wind speed forecasts during the January 7–10, 2025 Santa Ana wind event over California and the greater Los Angeles region.
+This repository contains a Python-based workflow for validating AI and numerical weather prediction (NWP) model forecasts against station-based surface observations. The workflow compares AI-based weather models, including Aurora, FourCastNet v2, FourCastNet v3, and GraphCast, against traditional or operational forecast products such as ECMWF IFS and the National Blend of Models (NBM). Forecasts are evaluated against processed Synoptic station observations using temporal, spatial, and station-network-based validation methods.
 
-The workflow compares AI-based weather models, including Aurora, FourCastNet v2, FourCastNet v3, and GraphCast, against traditional or operational forecast products such as ECMWF IFS and the National Blend of Models (NBM). Forecasts are evaluated against processed Synoptic station observations using temporal, spatial, and station-network-based validation methods.
+<img width="300" height="225" alt="image" src="https://github.com/user-attachments/assets/84cf51ca-89e2-4095-b469-c46ae8f3703c" />
+<img width="300" height="225" alt="image" src="https://github.com/user-attachments/assets/0e480da6-033e-4e90-bebf-b71798cb2010" />
 
 ## Project Goals
+
+The project focuses on evaluating 10-meter wind speed forecasts during the January 7–10, 2025 Santa Ana wind event over California and the greater Los Angeles region.
 
 * Compare AI and NWP wind-speed forecasts against station-derived observations.
 * Evaluate model performance across multiple forecast lead times.
