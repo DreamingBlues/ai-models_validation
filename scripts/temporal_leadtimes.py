@@ -1,13 +1,12 @@
-# Side-by-side lead-time wind speed forecast comparison
-# Layout: Model label | Wind Speed label | California plots | Los Angeles plots
-# Abtin Olaee 2026
+# Figure 2. Wind speed forecasts (0–144 h lead times) vs synoptic observations, 
+# Jan 7–10, 2025 California and Los Angeles area,
+# IFS, NBM, FourCastNet v3, FourCastNet v2, Aurora, and GraphCast.
 
 import argparse
 import sys
 
 import numpy as np
 import pandas as pd
-import xarray as xr
 import matplotlib.pyplot as plt
 
 from matplotlib.dates import DateFormatter, DayLocator
@@ -17,21 +16,16 @@ from viz_config import (
     DEFAULT_REGIONS,
     LEAD_DAYS,
     MODELS,
-    PATHS,
     PLOT_WINDOW,
     TEMPORAL_KEY_COLUMNS,
     VARIABLES,
 )
 from viz_utils import (
-    clean_time_index,
     ensure_parent_dir,
     lead_label,
-    model_path,
-    open_dataset_safe,
-    output_path as configured_output_path,
-    project_path,
-    region_mask,
-    trim_to_plot_window,
+    load_model_series,
+    load_station_series,
+    output_path,
     upsert_csv_columns,
 )
 
@@ -44,91 +38,14 @@ LEAD_COLORS = {
 }
 
 
-def load_situ_series(region):
-    nc_path = project_path(PATHS["station"])
-    var_name = VARIABLES["station_wind"]
-
-    if not nc_path.exists():
-        print(f"[Error] Station file not found: {nc_path}")
-        return None, []
-
-    ds = open_dataset_safe(nc_path)
-
-    if var_name not in ds:
-        print(f"[Error] Variable {var_name} not found in station dataset.")
-        return None, []
-
-    mask = region_mask(
-        ds.latitude.values,
-        ds.longitude.values,
-        region,
-    )
-
-    subset = ds.isel(station=mask)
-
-    if subset.sizes["station"] == 0:
-        print(f"[Warning] No stations found for {region}")
-        return None, []
-
-    station_coords = list(zip(subset.latitude.values, subset.longitude.values))
-
-    series = subset[var_name].mean(dim="station", skipna=True).to_series()
-    series = clean_time_index(series)
-    series = trim_to_plot_window(series)
-
-    print(f"{region}: loaded {subset.sizes['station']} stations")
-
-    return series, station_coords
-
-
-def load_model_series(model_key, day, station_coords):
-
-    nc_path = model_path(model_key, day)
-
-    if not nc_path.exists():
-        print(f"[Warning] Missing model file: {nc_path}")
-        return None
-
-    ds = open_dataset_safe(nc_path)
-
-    var_name = VARIABLES["model_wind"]
-
-    if var_name not in ds:
-        raise KeyError(f"{var_name} not found in {nc_path}")
-
-    target_lats = np.array([c[0] for c in station_coords])
-    target_lons = np.array([c[1] for c in station_coords])
-
-    selected = ds[var_name].sel(
-        latitude=xr.DataArray(target_lats, dims="station_id"),
-        longitude=xr.DataArray(target_lons, dims="station_id"),
-        method="nearest",
-    )
-
-    series = selected.mean(dim="station_id", skipna=True).to_series()
-    series = clean_time_index(series)
-    series = trim_to_plot_window(series)
-
-    return series.dropna()
-
-
-# =============================================================================
 # DATA PREP
-# =============================================================================
 
 def build_plot_data(regions, selected_models):
-    """
-    Output:
-        data[region]["situ"] = observed regional mean
-        data[region]["models"][model_key][day] = model regional mean
-        region_ymax[region] = max y value for that region only
-    """
-
     data = {}
     region_ymax = {}
 
     for region in regions:
-        situ_series, station_coords = load_situ_series(region)
+        situ_series, station_coords = load_station_series(region)
 
         if situ_series is None or not station_coords:
             continue
@@ -211,15 +128,13 @@ def update_temporal_csv(data, regions, selected_models, write_csv):
             print(f"[Warning] No CSV rows calculated for {region}")
             continue
 
-        csv_path = configured_output_path("temporal_metrics", region=region)
+        csv_path = output_path("temporal_metrics", region=region)
         rows_written = upsert_csv_columns(csv_path, records, TEMPORAL_KEY_COLUMNS)
 
         print(f"Updated CSV with {rows_written} lead-time rows: {csv_path}")
 
 
-# =============================================================================
 # PLOTTING
-# =============================================================================
 
 def plot_side_by_side(data, region_ymax, regions, selected_models):
     nrows = len(selected_models)
@@ -242,12 +157,9 @@ def plot_side_by_side(data, region_ymax, regions, selected_models):
         wspace=0.30,
     )
 
-    plot_axes = {}
-
     for row_idx, model_key in enumerate(selected_models):
         model_name = MODELS[model_key]
 
-        # Model-name label column
         label_ax = fig.add_subplot(gs[row_idx, 0])
         label_ax.axis("off")
         label_ax.text(
@@ -262,8 +174,6 @@ def plot_side_by_side(data, region_ymax, regions, selected_models):
 
         for col_idx, region in enumerate(regions):
             ax = fig.add_subplot(gs[row_idx, col_idx + 1])
-
-            plot_axes[(row_idx, col_idx)] = ax
 
             if row_idx == 0:
                 ax.set_title(
@@ -314,10 +224,9 @@ def plot_side_by_side(data, region_ymax, regions, selected_models):
                 linestyle="--",
                 linewidth=2.0,
                 zorder=10,
-                label="Synoptic (Truth)",
+                label="Regional Obs Mean",
             )
 
-            # Separate y-axis scale by region.
             ymax = region_ymax.get(region, 0.0)
             if ymax > 0:
                 ax.set_ylim(0, ymax * 1.12)
@@ -330,9 +239,8 @@ def plot_side_by_side(data, region_ymax, regions, selected_models):
             ax.grid(True, alpha=0.3)
 
             ax.xaxis.set_major_locator(DayLocator())
-            ax.xaxis.set_major_formatter(DateFormatter("%m-%d"))
+            ax.xaxis.set_major_formatter(DateFormatter("%d %HZ"))
 
-    # One shared y-axis label on the left side of the plot area
     fig.text(
         0.235,
         0.5,
@@ -351,7 +259,7 @@ def plot_side_by_side(data, region_ymax, regions, selected_models):
     )
 
     fig.supxlabel(
-        "Date (UTC)",
+        "January 2025 (UTC)",
         fontsize=12,
         y=0.055,
     )
@@ -377,7 +285,7 @@ def plot_side_by_side(data, region_ymax, regions, selected_models):
             color="black",
             linestyle="--",
             linewidth=2.0,
-            label="Synoptic (Truth)",
+            label="Regional Obs Mean",
         )
     )
 
@@ -399,7 +307,7 @@ def plot_side_by_side(data, region_ymax, regions, selected_models):
         bottom=0.10,
     )
 
-    out_path = configured_output_path("temporal_leadtimes")
+    out_path = output_path("temporal_leadtimes")
     ensure_parent_dir(out_path)
 
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
@@ -408,30 +316,12 @@ def plot_side_by_side(data, region_ymax, regions, selected_models):
     print(f"Saved plot: {out_path}")
 
 
-# =============================================================================
 # MAIN
-# =============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Create side-by-side CA/LA lead-time wind speed comparison."
-    )
-
-    parser.add_argument(
-        "--models",
-        nargs="+",
-        default=list(MODELS.keys()),
-        choices=list(MODELS.keys()),
-        help="Models to process, in the order given."
-    )
-    
-    parser.add_argument(
-        "--csv",
-        default=False,
-        action="store_true",
-        help="Save CSV output."
-    )
-
+    parser = argparse.ArgumentParser(description="Create side-by-side CA/LA lead-time wind speed comparison.")
+    parser.add_argument("--models", nargs="+", default=list(MODELS.keys()), choices=list(MODELS.keys()))
+    parser.add_argument("--csv", action="store_true", help="Save CSV output.")
 
     args = parser.parse_args()
 

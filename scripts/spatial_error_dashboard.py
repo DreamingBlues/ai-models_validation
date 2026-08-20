@@ -1,12 +1,12 @@
+# Appendix Figures B
 # Spatial error metric dashboard
 # Layout: metrics as rows, models as columns
 # Metrics: RMSE, MAE, MAPE, spatial Pearson r
-# Abtin Olaee 2026
+
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import sys
 import argparse
 
 from scipy.spatial import cKDTree
@@ -29,7 +29,7 @@ from viz_utils import (
     lead_label,
     model_path,
     open_dataset_safe,
-    output_path as configured_output_path,
+    output_path,
     project_path,
     region_mask,
     resolve_model_order,
@@ -38,8 +38,6 @@ from viz_utils import (
 
 
 WRITE_CSV = False
-
-
 
 METRIC_COLORS = {
     "rmse": "#1F77B4",   # deep blue
@@ -69,8 +67,7 @@ METRIC_INFO = {
 }
 
 
-# Optional manual y-axis limits.
-# None means the script calculates a shared limit across all models for that metric.
+# Manual y-axis limits. None uses the data range.
 Y_LIMITS = {
     "rmse": None,
     "mae": None,
@@ -86,10 +83,7 @@ def scalar_value(value):
             return np.nan
         value = value.iloc[0]
 
-    try:
-        return float(value)
-    except Exception:
-        return np.nan
+    return float(value)
 
 
 def filter_df_to_plot_window(df):
@@ -105,9 +99,7 @@ def filter_df_to_plot_window(df):
     ]
 
 
-# =============================================================================
 # DATA LOADING
-# =============================================================================
 
 def load_station_subset(nc_path, region, var_name):
     nc_path = project_path(nc_path)
@@ -152,26 +144,9 @@ def load_model_dataset(nc_path, var_name):
     return ds
 
 
-# =============================================================================
 # METRIC COMPUTATION
-# =============================================================================
 
 def compute_gridcell_metrics_timeseries(ds_model, ds_stations, model_var, station_var):
-    """
-    Computes spatial metrics at each timestep.
-
-    For each occupied model grid cell:
-        1. Average all stations assigned to that grid cell.
-        2. Extract model value at that grid cell.
-        3. Compare model and observation at each common time.
-
-    Then for each timestep:
-        RMSE(t) = sqrt(mean over grid cells of error^2)
-        MAE(t)  = mean over grid cells of abs(error)
-        MAPE(t) = mean over grid cells of abs(error / obs) * 100
-        r(t)    = Pearson correlation across grid cells between model and obs
-    """
-
     grid_lat = ds_model.latitude.values
     grid_lon = ds_model.longitude.values
 
@@ -298,16 +273,14 @@ def compute_all_metrics(region, selected_models):
     )
 
     if ds_stations is None:
-        print("No station data found. Exiting.")
-        sys.exit(1)
+        return pd.DataFrame()
 
     records = []
 
     for model_key in selected_models:
         model_name = MODELS[model_key]
 
-        print("\n")
-        print(f"Processing model: {model_name}")
+        print(f"\nProcessing model: {model_name}")
 
         for day in LEAD_DAYS:
             label, lead_hours = lead_label(day)
@@ -321,41 +294,40 @@ def compute_all_metrics(region, selected_models):
             )
 
             if ds_model is None:
-                print(f"  > Skipped Day {day} because model file is missing.")
+                print(f"Skipped Day {day}: model file is missing.")
                 continue
 
-            try:
-                metrics_df = compute_gridcell_metrics_timeseries(
-                    ds_model=ds_model,
-                    ds_stations=ds_stations,
-                    model_var=VARIABLES["model_wind"],
-                    station_var=VARIABLES["station_wind"],
-                )
+            metrics_df = compute_gridcell_metrics_timeseries(
+                ds_model=ds_model,
+                ds_stations=ds_stations,
+                model_var=VARIABLES["model_wind"],
+                station_var=VARIABLES["station_wind"],
+            )
+            ds_model.close()
 
-                if metrics_df is None or metrics_df.empty:
-                    print(f"  > Skipped Day {day} because metrics dataframe is empty.")
-                    continue
+            if metrics_df.empty:
+                print(f"Skipped Day {day}: metrics dataframe is empty.")
+                continue
 
-                for t, row in metrics_df.iterrows():
-                    records.append({
-                        "model_key": model_key,
-                        "model_name": model_name,
-                        "run_day": day,
-                        "leadtime_hr": lead_hours,
-                        "lead_label": label,
-                        "date_time": pd.Timestamp(t).strftime("%Y-%m-%d %H:%M:%S"),
-                        "rmse": row.get("rmse", np.nan),
-                        "mae": row.get("mae", np.nan),
-                        "mape": row.get("mape", np.nan),
-                        "r": row.get("r", np.nan),
-                        "n_grid_cells": row.get("n_grid_cells", np.nan),
-                        "region": region,
-                        "variable": VARIABLES["model_wind"],
-                        "units": VARIABLES["units"],
-                    })
+            for t, row in metrics_df.iterrows():
+                records.append({
+                    "model_key": model_key,
+                    "model_name": model_name,
+                    "run_day": day,
+                    "leadtime_hr": lead_hours,
+                    "lead_label": label,
+                    "date_time": pd.Timestamp(t).strftime("%Y-%m-%d %H:%M:%S"),
+                    "rmse": row["rmse"],
+                    "mae": row["mae"],
+                    "mape": row["mape"],
+                    "r": row["r"],
+                    "n_grid_cells": row["n_grid_cells"],
+                    "region": region,
+                    "variable": VARIABLES["model_wind"],
+                    "units": VARIABLES["units"],
+                })
 
-            except Exception as e:
-                print(f"  > Skipped Day {day} due to error: {e}")
+    ds_stations.close()
 
     if not records:
         return pd.DataFrame()
@@ -365,36 +337,23 @@ def compute_all_metrics(region, selected_models):
     df["date_time"] = pd.to_datetime(df["date_time"])
 
     df["_model_order"] = pd.Categorical(
-        df["model_key"],
-        categories=selected_models,
-        ordered=True
+        df["model_key"], categories=selected_models, ordered=True
     )
-
     df["_lead_order"] = pd.Categorical(
-        df["leadtime_hr"],
-        categories=LEAD_HOURS_ORDER,
-        ordered=True
+        df["leadtime_hr"], categories=LEAD_HOURS_ORDER, ordered=True
     )
-
-    df = df.sort_values(
-        ["_model_order", "_lead_order", "date_time"]
-    )
-
+    df = df.sort_values(["_model_order", "_lead_order", "date_time"])
     df = df.drop(columns=["_model_order", "_lead_order"])
 
     return df
 
 
-# =============================================================================
 # CSV HANDLING
-# =============================================================================
 
 def load_or_compute_metrics(region, selected_models, write_csv):
-    csv_file = configured_output_path("spatial_metrics", region=region)
+    csv_file = output_path("spatial_metrics", region=region)
 
-    csv_exists = csv_file.exists()
-
-    if csv_exists and not write_csv:
+    if csv_file.exists() and not write_csv:
         print(f"Loading existing CSV: {csv_file}")
 
         df = pd.read_csv(csv_file)
@@ -444,7 +403,7 @@ def load_or_compute_metrics(region, selected_models, write_csv):
 
     if df.empty:
         print("[Error] No metrics were computed.")
-        sys.exit(1)
+        return df
 
     if not write_csv:
         return df
@@ -457,9 +416,7 @@ def load_or_compute_metrics(region, selected_models, write_csv):
     return df
 
 
-# =============================================================================
 # PLOTTING
-# =============================================================================
 
 def compute_metric_y_limits(df):
     y_limits = {}
@@ -498,12 +455,11 @@ def plot_metric_dashboard(df, region, selected_models):
 
     if df.empty:
         print("[Error] No rows available inside plot window.")
-        sys.exit(1)
+        return
 
     n_models = len(selected_models)
     n_metrics = len(METRIC_COLORS)
 
-    # Models are columns, metrics are rows.
     fig_width = max(2.8 * n_models, 11)
     fig_height = 9.5
 
@@ -568,7 +524,6 @@ def plot_metric_dashboard(df, region, selected_models):
             ax.xaxis.set_major_locator(DayLocator())
             ax.xaxis.set_major_formatter(DateFormatter("%d"))
 
-            # Model names across the top.
             if row_idx == 0:
                 ax.set_title(
                     model_name,
@@ -576,7 +531,6 @@ def plot_metric_dashboard(df, region, selected_models):
                     fontweight="bold"
                 )
 
-            # Only show y-axis labels and y tick labels on the far-left plots.
             if col_idx == 0:
                 ax.set_ylabel(
                     METRIC_INFO[metric]["ylabel"],
@@ -588,7 +542,6 @@ def plot_metric_dashboard(df, region, selected_models):
                 ax.set_ylabel("")
                 ax.tick_params(axis="y", labelleft=False)
 
-            # Hide x tick labels except bottom row.
             if row_idx < n_metrics - 1:
                 ax.tick_params(labelbottom=False)
 
@@ -599,7 +552,7 @@ def plot_metric_dashboard(df, region, selected_models):
         y=0.995
     )
 
-    fig.supxlabel("Date (UTC)", fontsize=13, y=0.055)
+    fig.supxlabel("January 2025 (UTC)", fontsize=13, y=0.055)
 
     legend_handles = []
 
@@ -629,7 +582,7 @@ def plot_metric_dashboard(df, region, selected_models):
     plt.tight_layout(rect=[0.035, 0.075, 1.0, 0.955])
     fig.subplots_adjust(hspace=0.18, wspace=0.08)
 
-    out_file = configured_output_path("spatial_error", region=region)
+    out_file = output_path("spatial_error", region=region)
     ensure_parent_dir(out_file)
 
     plt.savefig(out_file, dpi=300, bbox_inches="tight")
@@ -638,37 +591,13 @@ def plot_metric_dashboard(df, region, selected_models):
     print(f"Saved plot: {out_file}")
 
 
-# =============================================================================
 # MAIN
-# =============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Plot spatial error dashboard with models as columns."
-    )
-
-    parser.add_argument(
-        "--region",
-        type=str,
-        default=DEFAULT_REGION,
-        choices=list(REGIONS.keys()),
-        help="Region to process. Default: LA."
-    )
-
-    parser.add_argument(
-        "--models",
-        nargs="+",
-        default=list(MODELS.keys()),
-        choices=list(MODELS.keys()),
-        help="Models to process, in the order given."
-    )
-
-    parser.add_argument(
-        "--csv",
-        default=WRITE_CSV,
-        action="store_true",
-        help="Recompute and replace the spatial metrics CSV."
-    )
+    parser = argparse.ArgumentParser(description="Plot spatial error dashboard with models as columns.")
+    parser.add_argument("--region", default=DEFAULT_REGION, choices=list(REGIONS.keys()))
+    parser.add_argument("--models", nargs="+", default=list(MODELS.keys()), choices=list(MODELS.keys()))
+    parser.add_argument("--csv", default=WRITE_CSV, action="store_true", help="Recompute and replace the spatial metrics CSV.")
 
     args = parser.parse_args()
 
@@ -688,7 +617,7 @@ def main():
     plot_metric_dashboard(
         df=df,
         region=region,
-        selected_models=selected_models
+        selected_models=selected_models,
     )
 
 

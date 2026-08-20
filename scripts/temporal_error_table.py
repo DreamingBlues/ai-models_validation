@@ -1,13 +1,12 @@
-# Side-by-side temporal error metric tables
-# Layout: Model label | CA table | LA table
-# Abtin Olaee 2026
+# Table 2: Color-coded temporal Error Metrics for California and Los Angeles area. 
+# Cell colors indicate relative performance within each region, 
+# ORANGE for poorer performance, GREEN for better performance colors have been calibrated separately for both regions. 
+# Metrics: RMSE, MAE, MAPE, Correlation r
 
 import argparse
-import sys
 
 import numpy as np
 import pandas as pd
-import xarray as xr
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap, Normalize, to_rgba
 from matplotlib.colorbar import ColorbarBase
@@ -18,20 +17,15 @@ from viz_config import (
     LEAD_HOURS_ORDER,
     MAPE_MIN_OBS,
     MODELS,
-    PATHS,
     TEMPORAL_KEY_COLUMNS,
     VARIABLES,
 )
 from viz_utils import (
-    clean_time_index,
     ensure_parent_dir,
     lead_label as forecast_lead_label,
-    model_path,
-    open_dataset_safe,
-    output_path as configured_output_path,
-    project_path,
-    region_mask,
-    trim_to_plot_window,
+    load_model_series,
+    load_station_series,
+    output_path,
     upsert_csv_columns,
 )
 
@@ -62,9 +56,7 @@ HEATMAP_CMAP = LinearSegmentedColormap.from_list(
     ],
 )
 
-# =============================================================================
 # HELPERS
-# =============================================================================
 
 def lead_label(hours):
     hours = int(hours)
@@ -78,11 +70,6 @@ def format_value(value):
 
 
 def metric_score(value, metric, metric_ranges):
-    """
-    Returns:
-        0 = best
-        1 = worst
-    """
     vmin, vmax = metric_ranges[metric]
 
     if pd.isna(value) or pd.isna(vmin) or pd.isna(vmax) or vmax == vmin:
@@ -96,72 +83,6 @@ def metric_score(value, metric, metric_ranges):
         score = 1.0 - raw
 
     return min(max(score, 0.0), 1.0)
-
-
-def load_station_series(region):
-    nc_path = project_path(PATHS["station"])
-    var_name = VARIABLES["station_wind"]
-
-    if not nc_path.exists():
-        print(f"[Error] Station file not found: {nc_path}")
-        return None, []
-
-    ds = open_dataset_safe(nc_path)
-
-    if var_name not in ds:
-        print(f"[Error] Variable {var_name} not found in station dataset.")
-        return None, []
-
-    mask = region_mask(
-        ds.latitude.values,
-        ds.longitude.values,
-        region,
-    )
-
-    subset = ds.isel(station=mask)
-
-    if subset.sizes["station"] == 0:
-        print(f"[Warning] No stations found for {region}")
-        return None, []
-
-    station_coords = list(zip(subset.latitude.values, subset.longitude.values))
-
-    series = subset[var_name].mean(dim="station", skipna=True).to_series()
-    series = clean_time_index(series)
-    series = trim_to_plot_window(series)
-
-    print(f"{region}: loaded {subset.sizes['station']} stations")
-
-    return series, station_coords
-
-
-def load_model_series(model_key, day, station_coords):
-    nc_path = model_path(model_key, day)
-
-    if not nc_path.exists():
-        print(f"[Warning] Missing model file: {nc_path}")
-        return None
-
-    ds = open_dataset_safe(nc_path)
-    var_name = VARIABLES["model_wind"]
-
-    if var_name not in ds:
-        raise KeyError(f"{var_name} not found in {nc_path}")
-
-    target_lats = np.array([c[0] for c in station_coords])
-    target_lons = np.array([c[1] for c in station_coords])
-
-    selected = ds[var_name].sel(
-        latitude=xr.DataArray(target_lats, dims="station_id"),
-        longitude=xr.DataArray(target_lons, dims="station_id"),
-        method="nearest",
-    )
-
-    series = selected.mean(dim="station_id", skipna=True).to_series()
-    series = clean_time_index(series)
-    series = trim_to_plot_window(series)
-
-    return series.dropna()
 
 
 def compute_series_metrics(model_series, obs_series):
@@ -296,31 +217,32 @@ def update_temporal_csv(region_dfs, write_csv):
             print(f"[Warning] No metric rows calculated for {region}")
             continue
 
-        csv_path = configured_output_path("temporal_metrics", region=region)
+        csv_path = output_path("temporal_metrics", region=region)
         rows_written = upsert_csv_columns(csv_path, records, TEMPORAL_KEY_COLUMNS)
 
         print(f"Updated CSV with {rows_written} temporal metric rows: {csv_path}")
 
-
 def get_metric_ranges(df_region):
-    """
-    Computes color scale ranges independently for one region.
-    CA and LA should each call this separately.
-    """
     ranges = {}
 
     for metric in METRICS:
-        ranges[metric] = (
-            df_region[metric].min(skipna=True),
-            df_region[metric].max(skipna=True),
-        )
+        values = np.sort(df_region[metric].dropna().unique())
+
+        if len(values) >= 3:
+            vmin = values[1]
+            vmax = values[-2]
+        elif len(values) == 2:
+            vmin, vmax = values[0], values[1]
+        elif len(values) == 1:
+            vmin = vmax = values[0]
+        else:
+            vmin = vmax = np.nan
+
+        ranges[metric] = (vmin, vmax)
 
     return ranges
 
-
-# =============================================================================
 # TABLE DRAWING
-# =============================================================================
 
 def draw_metric_table(ax, df_model, metric_ranges, show_header=True):
     ax.axis("off")
@@ -358,7 +280,6 @@ def draw_metric_table(ax, df_model, metric_ranges, show_header=True):
     header_color = "white"
     edge_color = to_rgba("black", 0.22)
 
-    # Header row
     if show_header:
         for c in range(5):
             cell = table[(0, c)]
@@ -367,7 +288,6 @@ def draw_metric_table(ax, df_model, metric_ranges, show_header=True):
             cell.set_edgecolor(edge_color)
             cell.set_linewidth(1)
 
-    # Body rows
     for i, (_, row) in enumerate(df_model.iterrows()):
         r = i + header_offset
         lead = int(row["Lead_Hours"])
@@ -397,7 +317,6 @@ def plot_side_by_side_tables(region_dfs, selected_models):
     nrows = len(selected_models)
     ncols = len(DEFAULT_REGIONS)
 
-    # Independent color ranges for each region
     metric_ranges_by_region = {
         region: get_metric_ranges(region_dfs[region])
         for region in DEFAULT_REGIONS
@@ -410,10 +329,6 @@ def plot_side_by_side_tables(region_dfs, selected_models):
 
     height_ratios = [1.18] + [1.0] * (nrows - 1)
 
-    # Layout:
-    # col 0 = model labels
-    # col 1 = CA tables
-    # col 2 = LA tables
     gs = fig.add_gridspec(
         nrows=nrows,
         ncols=ncols + 1,
@@ -422,13 +337,9 @@ def plot_side_by_side_tables(region_dfs, selected_models):
         hspace=0.18,
         wspace=0.08,
     )
-
-
-
     for row_idx, model_key in enumerate(selected_models):
         model_name = MODELS[model_key]
 
-        # Model label column
         label_ax = fig.add_subplot(gs[row_idx, 0])
         label_ax.axis("off")
         label_ax.text(
@@ -481,7 +392,6 @@ def plot_side_by_side_tables(region_dfs, selected_models):
         y=0.975,
     )
 
-    # One qualitative legend, but scales are calculated independently by region.
     cax = fig.add_axes([0.38, 0.045, 0.28, 0.018])
 
     cb = ColorbarBase(
@@ -510,38 +420,21 @@ def plot_side_by_side_tables(region_dfs, selected_models):
         bottom=0.13,
     )
 
-    output_path = configured_output_path("temporal_error_table")
-    ensure_parent_dir(output_path)
+    output_file = output_path("temporal_error_table")
+    ensure_parent_dir(output_file)
 
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.savefig(output_file, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
-    print(f"Saved table figure: {output_path}")
+    print(f"Saved table figure: {output_file}")
 
 
-# =============================================================================
 # MAIN
-# =============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Create side-by-side CA/LA temporal error metric tables."
-    )
-
-    parser.add_argument(
-        "--models",
-        nargs="+",
-        default=list(MODELS.keys()),
-        choices=list(MODELS.keys()),
-        help="Models to process, in the order given."
-    )
-
-    parser.add_argument(
-        "--csv",
-        default=False,
-        action="store_true",
-        help="Save computed temporal metrics to CSV."
-    )
+    parser = argparse.ArgumentParser(description="Create side-by-side CA/LA temporal error metric tables.")
+    parser.add_argument("--models", nargs="+", default=list(MODELS.keys()), choices=list(MODELS.keys()))
+    parser.add_argument("--csv", action="store_true", help="Save computed temporal metrics to CSV.")
 
     args = parser.parse_args()
 
@@ -550,25 +443,20 @@ def main():
     print(f"Models: {selected_models}")
     print(f"Regions: {DEFAULT_REGIONS}")
 
-    try:
-        region_dfs = {
-            region: load_region_metrics(region, selected_models)
-            for region in DEFAULT_REGIONS
-        }
+    region_dfs = {
+        region: load_region_metrics(region, selected_models)
+        for region in DEFAULT_REGIONS
+    }
 
-        update_temporal_csv(
-            region_dfs=region_dfs,
-            write_csv=args.csv,
-        )
+    update_temporal_csv(
+        region_dfs=region_dfs,
+        write_csv=args.csv,
+    )
 
-        plot_side_by_side_tables(
-            region_dfs=region_dfs,
-            selected_models=selected_models,
-        )
-
-    except Exception as e:
-        print(f"[Error] {e}")
-        sys.exit(1)
+    plot_side_by_side_tables(
+        region_dfs=region_dfs,
+        selected_models=selected_models,
+    )
 
 
 if __name__ == "__main__":

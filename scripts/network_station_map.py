@@ -1,4 +1,5 @@
-# Station Network Map Generator
+# Figure 1. Weather station locations by networks and region. 
+# PG&E, SCE, RAWS, and ASOS/AWOS. 
 
 import argparse
 import json
@@ -231,17 +232,32 @@ def plot_station_map(df_region, region):
 
         x, y = m(group["longitude"].values, group["latitude"].values)
 
-        m.scatter(
-            x,
-            y,
-            c=NETWORK_COLORS.get(network_id, "black"),
-            s=20,
-            marker="o",
-            alpha=0.9,
-            linewidths=0,
-            zorder=10 + i,
-            label=f"{NETWORK_NAMES.get(network_id, 'Unknown')} ({len(group)})",
-        )
+        if region == "CA":
+
+            m.scatter(
+                x,
+                y,
+                c=NETWORK_COLORS.get(network_id, "black"),
+                s=15,
+                marker="o",
+                alpha=0.9,
+                linewidths=0,
+                zorder=10 + i,
+                label=f"{NETWORK_NAMES.get(network_id, 'Unknown')} ({len(group)})",
+            )
+
+        elif region == "LA":
+            m.scatter(
+                x,
+                y,
+                c=NETWORK_COLORS.get(network_id, "black"),
+                s=20,
+                marker="o",
+                alpha=0.9,
+                linewidths=0,
+                zorder=10 + i,
+                label=f"{NETWORK_NAMES.get(network_id, 'Unknown')} ({len(group)})",
+            )
 
     plt.title(f"Station Network Map: {region}", fontsize=15)
 
