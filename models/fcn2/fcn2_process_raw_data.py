@@ -12,9 +12,7 @@ import xarray as xr
 from datetime import datetime
 from matplotlib.path import Path as MplPath
 
-# ==============================================================================
 # CONFIGURATION
-# ==============================================================================
 CONFIG = {
     "raw_path_template": "../fourcastnetv2_10day/data/fourcastnetv2-small-{day}.grib",
     "geojson_path": "./Con_Cali_Border_WGS84.geojson",
@@ -24,9 +22,6 @@ CONFIG = {
     "description": "FourcastnetV2-small surface variables masked to CA GeoJSON",
 }
 
-# ==============================================================================
-# SIMPLE PROGRESS BAR (no external deps)
-# ==============================================================================
 
 def progress(prefix, i, total, width=40):
     if total <= 0:
@@ -41,9 +36,6 @@ def progress(prefix, i, total, width=40):
         sys.stdout.write("\n")
         sys.stdout.flush()
 
-# ==============================================================================
-# VARLIST + UNIT NORMALIZATION
-# ==============================================================================
 
 def load_var_ref(csv_path):
     """
@@ -102,9 +94,6 @@ def calculate_wind(u, v):
     wd = (270 - np.degrees(np.arctan2(v, u))) % 360
     return ws, wd
 
-# ==============================================================================
-# GEOJSON MASKING
-# ==============================================================================
 
 def _iter_polygons_from_geojson(geojson_obj):
     def polygon_from_coords(coords):
@@ -169,9 +158,7 @@ def get_spatial_subset(lats, lons, geojson_path):
     print(f"Cropped Grid Shape: {mask_crop.shape}")
     return slice_y, slice_x, mask_crop
 
-# ==============================================================================
-# MAIN
-# ==============================================================================
+
 
 def main():
     parser = argparse.ArgumentParser(description="Process MODEL -> NetCDF, using synoptic varlist.")

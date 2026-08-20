@@ -12,9 +12,7 @@ import xarray as xr
 from datetime import datetime
 from matplotlib.path import Path as MplPath
 
-# ==============================================================================
 # CONFIGURATION
-# ==============================================================================
 CONFIG = {
     "raw_path_template": "../aurora_raw_data/data/aurora-2.5-pretrained_{day}.grib",
     "geojson_path": "./Con_Cali_Border_WGS84.geojson",
@@ -24,10 +22,7 @@ CONFIG = {
     "description": "Aurora surface variables masked to CA GeoJSON",
 }
 
-# =============================================================================
 # HELPERS
-# =============================================================================
-
 def progress(prefix, i, total, width=40):
     if total <= 0:
         return
@@ -170,9 +165,6 @@ def get_spatial_subset(lats, lons, geojson_path):
 
 
 
-# ==============================================================================
-# MAIN
-# ==============================================================================
 
 def main():
     parser = argparse.ArgumentParser(description="Process MODEL -> NetCDF, using synoptic varlist.")

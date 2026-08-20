@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# This script requires high-res data to have already been processed.
+# RUN nbm_process_raw_data.py BEFORE!
 # Abtin Olaee 2026
 
 import argparse
@@ -9,10 +11,8 @@ import pandas as pd
 import xarray as xr
 from scipy.spatial import cKDTree
 
-# ==============================================================================
-# CONFIGURATION
-# ==============================================================================
 
+# CONFIGURATION
 CONFIG = {
     "highres_nbm_template": (
         "/shome/u014930890/pge_projects/model-comparison/"
@@ -41,9 +41,6 @@ CONFIG = {
 VARS = ["air_temp", "wind_speed", "wind_direction"]
 
 
-# ==============================================================================
-# HELPERS
-# ==============================================================================
 
 def normalize_lon(lon):
     return ((lon + 180.0) % 360.0) - 180.0
@@ -282,21 +279,13 @@ def validate_output(ds_out, ds_ifs, y_dim, x_dim):
     )
 
 
-# ==============================================================================
-# MAIN
-# ==============================================================================
 
 def main():
     parser = argparse.ArgumentParser(
         description="Regrid high-res NBM buffer to exact low-res IFS grid"
     )
     parser.add_argument("--day", type=str, required=True, help="Day string, e.g. 01 or 05")
-    parser.add_argument(
-        "--max-distance-deg",
-        type=float,
-        default=CONFIG["max_distance_deg"],
-        help="Maximum allowed nearest-neighbor distance in degrees",
-    )
+
     args = parser.parse_args()
 
     highres_path = pathlib.Path(CONFIG["highres_nbm_template"].format(day=args.day))
@@ -331,7 +320,7 @@ def main():
         ds_nbm=ds_nbm,
         target_lat2d=target_lat2d,
         target_lon2d=target_lon2d,
-        max_distance_deg=args.max_distance_deg,
+        max_distance_deg=CONFIG["max_distance_deg"],
     )
 
     print(f"Distance cutoff: {args.max_distance_deg} degrees")

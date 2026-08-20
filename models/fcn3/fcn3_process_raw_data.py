@@ -11,9 +11,7 @@ import xarray as xr
 from datetime import datetime, timedelta
 from matplotlib.path import Path as MplPath
 
-# ==============================================================================
 # CONFIGURATION
-# ==============================================================================
 CONFIG = {
     "raw_path_template": "/fs/ember-fs2/adata/afarguell/ai_models/earth2studio/fcn3_det_2025-01-{day}T00:00.nc",
     "geojson_path": "./Con_Cali_Border_WGS84.geojson",
@@ -23,10 +21,7 @@ CONFIG = {
     "description": "FourcastnetV3 surface variables masked to CA GeoJSON",
 }
 
-# =============================================================================
 # HELPERS
-# =============================================================================
-
 def progress(prefix, i, total, width=40):
     if total <= 0:
         return
@@ -169,10 +164,6 @@ def get_spatial_subset(lats, lons, geojson_path):
     return slice_y, slice_x, mask_crop
 
 
-
-# ==============================================================================
-# MAIN
-# ==============================================================================
 
 def main():
     parser = argparse.ArgumentParser(description="Process MODEL -> NetCDF, using synoptic varlist.")

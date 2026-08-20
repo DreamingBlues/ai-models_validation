@@ -13,9 +13,8 @@ from tqdm import tqdm
 from datetime import datetime
 from matplotlib.path import Path as MplPath
 
-# ==============================================================================
 # CONFIGURATION
-# ==============================================================================
+
 CONFIG = {
     "raw_path_template": "./ifs_raw_data/202501{day}/ifs_hres.grib",
     "geojson_path": "./Con_Cali_Border_WGS84.geojson",
@@ -25,9 +24,7 @@ CONFIG = {
     "description": "IFS surface variables masked to CA GeoJSON",
 }
 
-# ==============================================================================
-# HELPERS
-# ==============================================================================
+
 def load_var_ref(csv_path):
     """
     CSV schema:
@@ -86,9 +83,7 @@ def calculate_wind(u, v):
     wd = (270 - np.degrees(np.arctan2(v, u))) % 360
     return ws, wd
 
-# ==============================================================================
-# GEOJSON MASKING
-# ==============================================================================
+
 
 def _iter_polygons_from_geojson(geojson_obj):
     def polygon_from_coords(coords):
@@ -151,9 +146,7 @@ def get_spatial_subset(lats, lons, geojson_path):
     print(f"Cropped Grid Shape: {mask_crop.shape}")
     return slice_y, slice_x, mask_crop
 
-# ==============================================================================
-# MAIN
-# ==============================================================================
+
 
 def main():
     parser = argparse.ArgumentParser(description="Process MODEL -> NetCDF, using synoptic varlist.")
@@ -219,9 +212,7 @@ def main():
             # Skip if not in our required list
             if grb.shortName not in raw_shortnames_needed:
                 continue
-            
-            # --- THE FIX: ALL OF THIS MUST BE INDENTED INSIDE THE FOR LOOP ---
-            
+                        
             # Extract data
             ts = int(grb.step)        
             
@@ -233,7 +224,6 @@ def main():
             # Increment our counter since we found a valid message
             msg_count += 1
             
-            # ------------------------------------------------------------------
 
     sys.stdout.write(f"\nProcessed {msg_count} valid messages. Done.\n")
     grbs.close()

@@ -14,20 +14,18 @@ import xarray as xr
 from matplotlib.path import Path as MplPath
 from tqdm import tqdm
 
-# ==============================================================================
-# CONFIGURATION
-# ==============================================================================
 
+# CONFIGURATION
 CONFIG = {
     # For days 1-4
     "input_dir_template": "/fs/ember-fs2/adata/afarguell/ai_models/nbm_data/202501{day}_00/core/co/",
 
     # For days 5-7
-    #"input_dir_template": "/shome/u014930890/pge_projects/NBM_10day/data/202501{day}_00/core/co/",
+    #"input_dir_template": "../NBM_10day/data/202501{day}_00/core/co/",
 
-    "geojson_path": "/shome/u014930890/pge_projects/model-comparison/Con_Cali_Border_WGS84.geojson",
-    "var_ref_path": "/shome/u014930890/pge_projects/model-comparison/nbm/synoptic_varlist_nbm.csv",
-    "output_nc_template": "/shome/u014930890/pge_projects/model-comparison/nbm/processed_data/highres/nbm_processed_CA_Day{day}.nc",
+    "geojson_path": "./Con_Cali_Border_WGS84.geojson",
+    "var_ref_path": "./nbm/synoptic_varlist_nbm.csv",
+    "output_nc_template": "./nbm/processed_data/highres/nbm_processed_CA_Day{day}.nc",
 
     "model_name": "NBM",
     "description": "High-resolution NBM buffer cropped to CA bbox with 2D source geolocation and CA mask",
@@ -40,9 +38,6 @@ CONFIG = {
 OUTPUT_VARS = ["air_temp", "wind_speed", "wind_direction"]
 
 
-# ==============================================================================
-# BASIC HELPERS
-# ==============================================================================
 
 def normalize_lon(lon):
     return ((lon + 180.0) % 360.0) - 180.0
@@ -131,9 +126,6 @@ def convert_to_standard_units(var_name, data, raw_units):
     raise ValueError(f"Unknown variable: {var_name}")
 
 
-# ==============================================================================
-# GEOJSON MASKING
-# ==============================================================================
 
 def _iter_polygons_from_geojson(geojson_obj):
     def polygon_from_coords(coords):
@@ -211,11 +203,10 @@ def get_spatial_subset(lats, lons, geojson_path, radius=0.0):
     return slice_y, slice_x, mask_crop
 
 
-# ==============================================================================
-# GRIB MESSAGE SELECTION
-# ==============================================================================
+
 
 def select_first(grbs, queries):
+    "Prune GRIB search queries to find successful matches, Works with find_message()"
     for query in queries:
         try:
             matches = grbs.select(**query)
@@ -279,9 +270,7 @@ def masked_to_nan(values):
     return np.asarray(values, dtype=np.float32)
 
 
-# ==============================================================================
-# MAIN
-# ==============================================================================
+
 
 def main():
     parser = argparse.ArgumentParser(description="Process raw NBM GRIB -> high-res curvilinear NetCDF buffer")
