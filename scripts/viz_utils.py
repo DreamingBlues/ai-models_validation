@@ -1,4 +1,4 @@
-"""Shared helper functions for publication visual scripts."""
+# Shared helper functions for publication visual scripts to reduce redundancy
 
 from pathlib import Path
 
@@ -13,6 +13,7 @@ from viz_config import (
     PROJECT_ROOT,
     REF_DAY,
     REGIONS,
+    VARIABLES,
 )
 
 
@@ -93,6 +94,78 @@ def trim_to_period(series, start, end):
 def trim_to_plot_window(series):
     """Trim a Series to the configured publication plot window."""
     return trim_to_period(series, PLOT_WINDOW["start"], PLOT_WINDOW["end"])
+
+
+def load_station_series(region):
+    """Load the regional mean station series and its station coordinates."""
+    nc_path = project_path(PATHS["station"])
+    var_name = VARIABLES["station_wind"]
+
+    if not nc_path.exists():
+        print(f"[Error] Station file not found: {nc_path}")
+        return None, []
+
+    ds = open_dataset_safe(nc_path)
+
+    if var_name not in ds:
+        print(f"[Error] Variable {var_name} not found in station dataset.")
+        return None, []
+
+    mask = region_mask(
+        ds.latitude.values,
+        ds.longitude.values,
+        region,
+    )
+
+    subset = ds.isel(station=mask)
+
+    if subset.sizes["station"] == 0:
+        print(f"[Warning] No stations found for {region}")
+        return None, []
+
+    station_coords = list(zip(subset.latitude.values, subset.longitude.values))
+
+    series = subset[var_name].mean(dim="station", skipna=True).to_series()
+    series = clean_time_index(series)
+    series = trim_to_plot_window(series)
+
+    print(f"{region}: loaded {subset.sizes['station']} stations")
+
+    return series, station_coords
+
+
+def load_model_series(model_key, day, station_coords):
+    """Load a model series sampled at the supplied station coordinates."""
+    import numpy as np
+    import xarray as xr
+
+    nc_path = model_path(model_key, day)
+
+    if not nc_path.exists():
+        print(f"[Warning] Missing model file: {nc_path}")
+        return None
+
+    ds = open_dataset_safe(nc_path)
+
+    var_name = VARIABLES["model_wind"]
+
+    if var_name not in ds:
+        raise KeyError(f"{var_name} not found in {nc_path}")
+
+    target_lats = np.array([c[0] for c in station_coords])
+    target_lons = np.array([c[1] for c in station_coords])
+
+    selected = ds[var_name].sel(
+        latitude=xr.DataArray(target_lats, dims="station_id"),
+        longitude=xr.DataArray(target_lons, dims="station_id"),
+        method="nearest",
+    )
+
+    series = selected.mean(dim="station_id", skipna=True).to_series()
+    series = clean_time_index(series)
+    series = trim_to_plot_window(series)
+
+    return series.dropna()
 
 
 def region_bounds(region):

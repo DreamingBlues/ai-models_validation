@@ -1,4 +1,5 @@
-"""Shared project constants for publication visual scripts."""
+# Shared project constants for visualization scripts
+
 
 from pathlib import Path
 
@@ -15,15 +16,15 @@ PATHS = {
 
 
 OUTPUTS = {
-    "temporal_leadtimes": "./figs/plots/leadtime_side_by_side_CA_LA.png",
-    "temporal_bias": "./figs/plots/leadtime_bias_side_by_side_CA_LA.png",
+    "temporal_leadtimes": "./figs/plots/model_ws_avg_CA_LA.png",
+    "temporal_bias": "./figs/plots/model_ws_bias_CA_LA.png",
     "temporal_metrics": "./figs/data/temporal_error_metrics_{region}.csv",
     "temporal_error_table": "./figs/tables/leadtime_metrics_CA_LA.png",
     "spatial_error": "./figs/plots/spatial_error_{region}.png",
     "spatial_metrics": "./figs/data/spatial_error_metrics_{region}.csv",
     "spatial_map": (
-        "./figs/maps/synoptic_and_signed_wind_difference_"
-        "{lead_label}_{region}_Day{day}_{time_tag}.png"
+        "./figs/maps/bias_map_"
+        "{lead_label}_{region}_Day{day}.png"
     ),
     "error_vs_station_z0": "./figs/scatter/{metric}_density_z0_era5_{region}.png",
     "network_observations": "./figs/plots/station_observations_by_network_{region}.png",
@@ -58,7 +59,7 @@ VARIABLES = {
 LEAD_DAYS = ["01", "03", "05", "06", "07"]
 LEAD_HOURS_ORDER = [144, 96, 48, 24, 0]
 REF_DAY = "07"
-DEFAULT_INIT_DAY = "05"
+DEFAULT_INIT_DAY = "07"
 
 
 PLOT_WINDOW = {
